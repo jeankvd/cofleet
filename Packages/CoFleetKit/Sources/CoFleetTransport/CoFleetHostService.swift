@@ -248,6 +248,17 @@ public actor CoFleetHostService: CoFleetFleetRepository, CoFleetThreadRepository
         )
     }
 
+    public func openSessionInCodex(hostID: CoFleetHostID, sessionID: String) async throws {
+        try await requireHost(hostID)
+        let response: SessionDesktopOpenDTO = try await client.post(
+            "/v1/sessions/\(sessionID.pathComponent)/open-in-codex",
+            body: EmptyRequest()
+        )
+        guard response.opened, response.sessionID == sessionID else {
+            throw CoFleetClientError.invalidResponse
+        }
+    }
+
     public func archiveSession(hostID: CoFleetHostID, sessionID: String) async throws {
         let _: IgnoredResponse = try await client.post(
             "/v1/sessions/\(sessionID.pathComponent)/archive",
@@ -537,6 +548,11 @@ private struct SessionMutationDTO: Decodable, Sendable {
     var title: String
 }
 
+private struct SessionDesktopOpenDTO: Decodable, Sendable {
+    var sessionID: String
+    var opened: Bool
+}
+
 struct StartTurnRequest: Encodable, Sendable {
     var input: [StartTurnInputRequest]
     var projectID: String
@@ -697,6 +713,7 @@ private struct HostDTO: Decodable, Sendable {
     struct Capabilities: Decodable, Sendable {
         var folderCreation: Bool?
         var pets: Bool?
+        var codexDesktopOpen: Bool?
         var sourceControl: [String]?
     }
 
@@ -718,6 +735,7 @@ private struct HostDTO: Decodable, Sendable {
                 canBrowseDirectories: true,
                 canCreateDirectories: capabilities.folderCreation ?? false,
                 canImportPets: capabilities.pets ?? false,
+                canNavigateCodexDesktop: capabilities.codexDesktopOpen ?? false,
                 supportsPlasticSCM: capabilities.sourceControl?.contains("plastic") ?? false
             ),
             lastSeenAt: .now

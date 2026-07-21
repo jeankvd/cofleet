@@ -42,18 +42,38 @@ public struct CoFleetHostCapabilities: Codable, Hashable, Sendable {
     public var canBrowseDirectories: Bool
     public var canCreateDirectories: Bool
     public var canImportPets: Bool
+    public var canNavigateCodexDesktop: Bool
     public var supportsPlasticSCM: Bool
 
     public init(
         canBrowseDirectories: Bool = true,
         canCreateDirectories: Bool = true,
         canImportPets: Bool = true,
+        canNavigateCodexDesktop: Bool = false,
         supportsPlasticSCM: Bool = false
     ) {
         self.canBrowseDirectories = canBrowseDirectories
         self.canCreateDirectories = canCreateDirectories
         self.canImportPets = canImportPets
+        self.canNavigateCodexDesktop = canNavigateCodexDesktop
         self.supportsPlasticSCM = supportsPlasticSCM
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case canBrowseDirectories
+        case canCreateDirectories
+        case canImportPets
+        case canNavigateCodexDesktop
+        case supportsPlasticSCM
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        canBrowseDirectories = try container.decodeIfPresent(Bool.self, forKey: .canBrowseDirectories) ?? true
+        canCreateDirectories = try container.decodeIfPresent(Bool.self, forKey: .canCreateDirectories) ?? true
+        canImportPets = try container.decodeIfPresent(Bool.self, forKey: .canImportPets) ?? true
+        canNavigateCodexDesktop = try container.decodeIfPresent(Bool.self, forKey: .canNavigateCodexDesktop) ?? false
+        supportsPlasticSCM = try container.decodeIfPresent(Bool.self, forKey: .supportsPlasticSCM) ?? false
     }
 }
 

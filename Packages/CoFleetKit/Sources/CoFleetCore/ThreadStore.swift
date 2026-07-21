@@ -24,6 +24,8 @@ public final class ThreadStore {
         return sessions.first { $0.id == selectedSessionID }
     }
 
+    public var loadedProjectID: String? { projectID }
+
     public var canLoadMore: Bool { nextCursor != nil }
 
     public func loadInitial(hostID: CoFleetHostID, projectID: String) async {
@@ -108,6 +110,13 @@ public final class ThreadStore {
         try await repository.renameSession(hostID: hostID, sessionID: selectedSessionID, title: title)
         guard let index = sessions.firstIndex(where: { $0.id == selectedSessionID }) else { return }
         sessions[index].title = title
+    }
+
+    public func openSelectedInCodex() async throws {
+        guard let hostID, let selectedSessionID else {
+            throw CoFleetClientError.unavailable("Choose a Codex task first.")
+        }
+        try await repository.openSessionInCodex(hostID: hostID, sessionID: selectedSessionID)
     }
 
     private func loadPage(cursor: String?, replacing: Bool) async {

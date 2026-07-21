@@ -5,12 +5,16 @@ import SwiftUI
 #if !os(watchOS)
 
 public struct CoFleetProgressView: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable private var fleetStore: FleetStore
     @Bindable private var threadStore: ThreadStore
     @Bindable private var turnStore: TurnStore
     @Bindable private var workspaceStore: WorkspaceStore
     @Binding private var settings: CoFleetSessionSettings
     private let localHostID: CoFleetHostID?
+
+    @AppStorage("cofleet.progress.codexCompanionMode")
+    private var codexCompanionMode = false
 
     @State private var showsSessionPicker = false
     @State private var showsAgentVisibility = false
@@ -21,6 +25,8 @@ public struct CoFleetProgressView: View {
     @State private var projectPendingRemoval: CoFleetProject?
     @State private var projectOperationID: String?
     @State private var projectLifecycleError: String?
+    @State private var companionPendingProjectID: String?
+    @State private var companionError: String?
 
     public init(
         fleetStore: FleetStore,
@@ -40,31 +46,62 @@ public struct CoFleetProgressView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Progress")
-                        .font(.system(.title2, design: .rounded, weight: .bold))
-                    Text("\(fleetStore.visibleProjects.count) visible projects")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text("Agent Progress")
+                        .font(.system(.title2, design: .rounded, weight: .heavy))
+                    if horizontalSizeClass != .compact {
+                        Text("\(fleetStore.visibleProjects.count) visible projects")
+                            .font(.caption.monospaced().weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
+                Toggle(isOn: $codexCompanionMode) {
+                    Label(
+                        horizontalSizeClass == .compact ? "Codex" : "Codex Companion",
+                        systemImage: codexCompanionMode ? "iphone.and.arrow.forward" : "iphone"
+                    )
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(
+                            codexCompanionMode ? CoFleetTheme.cyan.opacity(0.2) : Color.white.opacity(0.07),
+                            in: Capsule()
+                        )
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("When enabled, tapping a project asks its Mac host to open the current task in Codex")
+                .accessibilityIdentifier("cofleet.progress.codex-companion")
                 Button {
                     showsAddProject = true
                 } label: {
-                    Label("Add Project", systemImage: "folder.badge.plus")
+                    Label(horizontalSizeClass == .compact ? "" : "Add Project", systemImage: "folder.badge.plus")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.07), in: Capsule())
                 }
+                .buttonStyle(.plain)
                 Button {
                     showsAgentVisibility.toggle()
                 } label: {
-                    Label("Projects", systemImage: "slider.horizontal.3")
+                    Label(horizontalSizeClass == .compact ? "" : "Projects", systemImage: "slider.horizontal.3")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.07), in: Capsule())
                 }
+                .buttonStyle(.plain)
                 .popover(isPresented: $showsAgentVisibility) {
                     projectVisibilityPopover
                 }
             }
-            .padding()
-            .background(CoFleetTheme.surface)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial)
 
             GeometryReader { proxy in
                 ScrollView {
@@ -158,6 +195,20 @@ public struct CoFleetProgressView: View {
         } message: {
             Text(projectLifecycleError ?? "An unknown error occurred.")
         }
+        .alert("Couldn’t Open Codex", isPresented: companionErrorIsPresented) {
+            Button("OK", role: .cancel) { companionError = nil }
+        } message: {
+            Text(companionError ?? "The host could not open this task in Codex.")
+        }
+        .onChange(of: threadStore.sessions.map(\.id)) {
+            openPendingCompanionTaskIfReady()
+        }
+        .onChange(of: threadStore.isLoading) { _, isLoading in
+            if !isLoading { openPendingCompanionTaskIfReady() }
+        }
+        .onChange(of: codexCompanionMode) { _, isEnabled in
+            if !isEnabled { companionPendingProjectID = nil }
+        }
         .task {
             if !fleetStore.hosts.isEmpty && fleetStore.projects.isEmpty {
                 showsAddProject = true
@@ -187,7 +238,7 @@ public struct CoFleetProgressView: View {
             petAsset: selected ? workspaceStore.selectedPetAsset : nil,
             availableWidth: width,
             localThreadURL: localURL(for: project),
-            onSelect: { fleetStore.selectedProjectID = project.id },
+            onSelect: { selectOrOpen(project) },
             onShowSessions: {
                 fleetStore.selectedProjectID = project.id
                 showsSessionPicker = true
@@ -240,6 +291,63 @@ public struct CoFleetProgressView: View {
                 if !presented { projectLifecycleError = nil }
             }
         )
+    }
+
+    private var companionErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { companionError != nil },
+            set: { presented in
+                if !presented { companionError = nil }
+            }
+        )
+    }
+
+    private func selectOrOpen(_ project: CoFleetProject) {
+        guard codexCompanionMode else {
+            fleetStore.selectedProjectID = project.id
+            return
+        }
+
+        companionError = nil
+        companionPendingProjectID = project.id
+        if fleetStore.selectedProjectID != project.id {
+            fleetStore.selectedProjectID = project.id
+        } else {
+            openPendingCompanionTaskIfReady()
+        }
+    }
+
+    private func openPendingCompanionTaskIfReady() {
+        guard let projectID = companionPendingProjectID,
+              fleetStore.selectedProjectID == projectID,
+              !threadStore.isLoading else { return }
+        guard threadStore.loadedProjectID == projectID else { return }
+        guard let project = fleetStore.selectedProject,
+              let host = fleetStore.hosts.first(where: { $0.id == project.hostID }) else { return }
+        guard host.reachability == .online else {
+            companionPendingProjectID = nil
+            companionError = "\(host.displayName) is offline, so it can’t open this task."
+            return
+        }
+        guard host.capabilities.canNavigateCodexDesktop else {
+            companionPendingProjectID = nil
+            companionError = "Update cofleet-host on \(host.displayName), then refresh Progress to enable Codex Companion."
+            return
+        }
+        guard threadStore.selectedSession != nil else {
+            companionPendingProjectID = nil
+            companionError = "This project does not have a Codex task to open yet."
+            return
+        }
+
+        companionPendingProjectID = nil
+        Task {
+            do {
+                try await threadStore.openSelectedInCodex()
+            } catch {
+                companionError = error.localizedDescription
+            }
+        }
     }
 
     private func beginRenaming(_ project: CoFleetProject) {
@@ -516,23 +624,47 @@ public struct CoFleetProjectCard: View {
 
             if let session {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(session.title)
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.arrow.circlepath")
+                        Text("LAST SESSION")
+                            .tracking(0.7)
+                        Text("·")
+                        Text(session.updatedAt.formatted(.relative(presentation: .named)))
+                    }
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
                     if let preview = session.preview {
-                        Text(preview).lineLimit(3)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(session.title)
+                                .font(.caption2.monospaced().weight(.bold))
+                                .foregroundStyle(.secondary)
+                                .textCase(.uppercase)
+                            Text(preview)
+                                .font(.callout.weight(.medium))
+                                .lineLimit(3)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 9)
+                        .background(CoFleetTheme.subtleFill, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .stroke(CoFleetTheme.hairline)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
             }
 
             HStack(spacing: 8) {
                 TextField("Message \(project.displayName)…", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .padding(10)
-                    .background(Color.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
+                    .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(CoFleetTheme.hairline)
+                    }
                     .disabled(!selected)
                     .onSubmit(onSend)
                 Button(action: onSend) {
@@ -545,10 +677,14 @@ public struct CoFleetProjectCard: View {
                 .disabled(!selected || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .coFleetPanel()
+        .padding(16)
+        .background(
+            selected ? CoFleetTheme.cyan.opacity(0.075) : CoFleetTheme.panelFill,
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(selected ? CoFleetTheme.violet : Color.clear, lineWidth: 1.5)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(selected ? CoFleetTheme.cyan.opacity(0.7) : CoFleetTheme.hairline, lineWidth: selected ? 1.5 : 1)
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
@@ -567,7 +703,7 @@ public struct CoFleetProjectCard: View {
                     Text(project.displayName)
                         .font(.system(.headline, design: .rounded, weight: .bold))
                     Text(host?.displayName ?? "Unknown host")
-                        .font(.caption)
+                        .font(.caption.monospaced().weight(.medium))
                         .foregroundStyle(.secondary)
                     CoFleetStatusIndicators(
                         reachability: host?.reachability ?? .unknown,
@@ -576,20 +712,26 @@ public struct CoFleetProjectCard: View {
                     )
                 }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 Button(action: onShowSessions) {
                     Label("History", systemImage: "clock.arrow.circlepath")
+                        .labelStyle(.iconOnly)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Session history")
                 Button(action: onShowPets) {
                     Label("Pet", systemImage: "shippingbox")
+                        .labelStyle(.iconOnly)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Choose pet")
                 if let localThreadURL {
                     Link(destination: localThreadURL) {
                         Label("Codex", systemImage: "arrow.up.forward.app")
+                            .labelStyle(.iconOnly)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Open in Codex")
                 }
                 Menu {
                     Button(action: onRenameProject) {
@@ -601,8 +743,9 @@ public struct CoFleetProjectCard: View {
                     }
                 } label: {
                     Label("Manage", systemImage: "ellipsis.circle")
+                        .labelStyle(.iconOnly)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .disabled(isManagingProject)
                 .accessibilityLabel("Manage \(project.displayName)")
             }
@@ -676,6 +819,12 @@ public struct CoFleetProjectCard: View {
             .padding(7)
             .background(Color.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 9))
             .disabled(!selected)
+        }
+        .padding(10)
+        .background(CoFleetTheme.subtleFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(CoFleetTheme.hairline)
         }
     }
 }

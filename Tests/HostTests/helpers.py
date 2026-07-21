@@ -58,7 +58,12 @@ class FakeCodex:
 
 
 class ServiceFixture:
-    def __init__(self, interaction_ttl: int = 300, **config_overrides: Any) -> None:
+    def __init__(
+        self,
+        interaction_ttl: int = 300,
+        desktop_opener=None,
+        **config_overrides: Any,
+    ) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temporary.name)
         self.home = self.root / "home"
@@ -81,6 +86,7 @@ class ServiceFixture:
                 "proxyTargets": ["http://127.0.0.1:%d" % port],
                 "funnelAllowed": False,
             },
+            desktop_opener=desktop_opener,
         )
 
     def pair(self, name: str = "Test iPhone") -> Tuple[Dict[str, Any], str]:

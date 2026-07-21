@@ -79,6 +79,15 @@ public protocol CoFleetThreadRepository: Sendable {
     func renameSession(hostID: CoFleetHostID, sessionID: String, title: String) async throws
     func archiveSession(hostID: CoFleetHostID, sessionID: String) async throws
     func unarchiveSession(hostID: CoFleetHostID, sessionID: String) async throws
+    func openSessionInCodex(hostID: CoFleetHostID, sessionID: String) async throws
+}
+
+public extension CoFleetThreadRepository {
+    func openSessionInCodex(hostID: CoFleetHostID, sessionID: String) async throws {
+        throw CoFleetClientError.incompatible(
+            "Update cofleet-host on this Mac to use Codex Companion mode."
+        )
+    }
 }
 
 public enum CoFleetTurnEvent: Hashable, Sendable {

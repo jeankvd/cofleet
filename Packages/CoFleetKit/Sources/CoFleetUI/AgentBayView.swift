@@ -14,6 +14,7 @@ public struct CoFleetAgentBayView: View {
 
     @State private var showsSessions = false
     @State private var showsAddProject = false
+    @State private var showsRuntime = false
     @State private var showsImageURLPrompt = false
     @State private var showsLocalImagePicker = false
     @State private var imageURLDraft = ""
@@ -42,10 +43,16 @@ public struct CoFleetAgentBayView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(turnStore.items) { item in
-                            CoFleetTurnItemView(item: item)
-                                .id(item.id)
+                    LazyVStack(alignment: .leading, spacing: 11) {
+                        ForEach(conversationEntries) { entry in
+                            switch entry.content {
+                            case let .message(item):
+                                CoFleetTurnItemView(item: item)
+                                    .id(entry.id)
+                            case let .activity(items):
+                                CoFleetActivityTimeline(items: items)
+                                    .id(entry.id)
+                            }
                         }
                         ForEach(turnStore.interactions) { interaction in
                             CoFleetInteractionView(interaction: interaction) { decision, answers in
@@ -65,6 +72,24 @@ public struct CoFleetAgentBayView: View {
         }
         .background(CoFleetTheme.background)
         .sheet(isPresented: $showsSessions) { CoFleetSessionPicker(store: threadStore) }
+        .sheet(isPresented: $showsRuntime) {
+            NavigationStack {
+                CoFleetRuntimeControls(settings: $settings, models: models)
+                    .navigationTitle("Codex Settings")
+                    #if os(iOS)
+                    .navigationBarTitleDisplayMode(.inline)
+                    #endif
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showsRuntime = false }
+                        }
+                    }
+            }
+            #if os(iOS)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            #endif
+        }
         .sheet(isPresented: $showsAddProject) {
             if let fleetStore {
                 CoFleetProjectRegistrationView(fleetStore: fleetStore)
@@ -89,36 +114,52 @@ public struct CoFleetAgentBayView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(threadStore.selectedSession?.title ?? "Agent Bay")
-                        .font(.headline)
+                        .font(.system(.headline, design: .rounded, weight: .bold))
+                        .lineLimit(1)
                     Text(threadStore.selectedSession?.modelID ?? settings.modelID ?? "Host default model")
-                        .font(.caption)
+                        .font(.caption.monospaced().weight(.semibold))
                         .foregroundStyle(CoFleetTheme.cyan)
                 }
                 Spacer()
                 Button { showsSessions = true } label: {
                     Label("History", systemImage: "clock.arrow.circlepath")
+                        .labelStyle(.iconOnly)
                 }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Session history")
                 if fleetStore != nil {
                     Button { showsAddProject = true } label: {
                         Label("Add Project", systemImage: "folder.badge.plus")
+                            .labelStyle(.iconOnly)
                     }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Add project")
                 }
+                Button { showsRuntime = true } label: {
+                    Label("Runtime", systemImage: "slider.horizontal.3")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Model, reasoning, speed, and access")
                 if turnStore.activeTurn != nil {
                     Button(role: .destructive) {
                         Task { try? await turnStore.interrupt() }
                     } label: {
                         Label("Stop", systemImage: "stop.fill")
+                            .labelStyle(.iconOnly)
                     }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Stop active turn")
                 }
             }
-            CoFleetRuntimeControls(settings: $settings, models: models)
         }
-        .padding(14)
-        .background(CoFleetTheme.surface)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
     }
 
     private var composer: some View {
@@ -203,6 +244,10 @@ public struct CoFleetAgentBayView: View {
                 composerErrorMessage = error.localizedDescription
             }
         }
+    }
+
+    private var conversationEntries: [CoFleetConversationEntry] {
+        CoFleetConversationEntry.make(from: turnStore.items)
     }
 
     private var isAttachmentLimitReached: Bool {
@@ -318,6 +363,203 @@ public struct CoFleetAgentBayView: View {
     #endif
 }
 
+private struct CoFleetConversationEntry: Identifiable {
+    enum Content {
+        case message(CoFleetTurnItem)
+        case activity([CoFleetTurnItem])
+    }
+
+    let id: String
+    let content: Content
+
+    static func make(from items: [CoFleetTurnItem]) -> [Self] {
+        var entries: [Self] = []
+        var activities: [CoFleetTurnItem] = []
+
+        func flushActivities() {
+            guard let first = activities.first else { return }
+            entries.append(Self(id: "activity-\(first.turnID)-\(first.id)", content: .activity(activities)))
+            activities.removeAll(keepingCapacity: true)
+        }
+
+        for item in items {
+            if item.kind.isWorkActivity {
+                if let previous = activities.last, previous.turnID != item.turnID {
+                    flushActivities()
+                }
+                activities.append(item)
+            } else {
+                flushActivities()
+                entries.append(Self(id: item.id, content: .message(item)))
+            }
+        }
+        flushActivities()
+        return entries
+    }
+}
+
+private extension CoFleetTurnItemKind {
+    var isWorkActivity: Bool {
+        switch self {
+        case .reasoning, .command, .fileChange, .tool: true
+        case .userMessage, .assistantMessage, .system: false
+        }
+    }
+}
+
+private struct CoFleetActivityTimeline: View {
+    let items: [CoFleetTurnItem]
+    @State private var isExpanded: Bool
+
+    init(items: [CoFleetTurnItem]) {
+        self.items = items
+        _isExpanded = State(initialValue: items.contains { $0.state == .streaming || $0.state == .failed })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: statusSymbol)
+                        .foregroundStyle(statusColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(statusTitle)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(summary)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if isActive {
+                        ProgressView().controlSize(.mini).tint(CoFleetTheme.cyan)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(statusTitle), \(summary), \(isExpanded ? "collapse" : "expand")")
+
+            if isExpanded {
+                Divider().padding(.leading, 42)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        activityRow(item, drawsConnector: index < items.count - 1)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .frame(maxWidth: 700, alignment: .leading)
+        .background(CoFleetTheme.subtleFill, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(statusColor.opacity(hasFailure ? 0.38 : 0.16))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func activityRow(_ item: CoFleetTurnItem, drawsConnector: Bool) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            VStack(spacing: 0) {
+                ZStack {
+                    Circle()
+                        .fill(color(for: item).opacity(0.14))
+                        .frame(width: 24, height: 24)
+                    Image(systemName: symbol(for: item))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(color(for: item))
+                }
+                if drawsConnector {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.18))
+                        .frame(width: 1, height: 12)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text(label(for: item))
+                        .font(.caption.weight(.semibold))
+                    if item.state == .streaming {
+                        ProgressView().controlSize(.mini).tint(CoFleetTheme.cyan)
+                    } else if item.state == .failed {
+                        Text("Failed").font(.caption2.weight(.semibold)).foregroundStyle(CoFleetTheme.danger)
+                    }
+                }
+                if !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(item.text)
+                        .font(item.kind == .reasoning ? .caption : .caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            .padding(.bottom, drawsConnector ? 8 : 0)
+        }
+    }
+
+    private var isActive: Bool { items.contains { $0.state == .streaming || $0.state == .pending } }
+    private var hasFailure: Bool { items.contains { $0.state == .failed } }
+    private var statusTitle: String { hasFailure ? "Needs attention" : (isActive ? "Working" : "Worked") }
+    private var statusSymbol: String { hasFailure ? "xmark.circle.fill" : (isActive ? "circle.dotted" : "checkmark.circle.fill") }
+    private var statusColor: Color { hasFailure ? CoFleetTheme.danger : (isActive ? CoFleetTheme.cyan : CoFleetTheme.green) }
+
+    private var summary: String {
+        var parts: [String] = []
+        let reasoning = items.filter { $0.kind == .reasoning }.count
+        let commands = items.filter { $0.kind == .command }.count
+        let changes = items.filter { $0.kind == .fileChange }.count
+        let tools = items.filter { $0.kind == .tool }.count
+        if reasoning > 0 { parts.append("Thinking") }
+        if commands > 0 { parts.append("Ran \(commands) \(commands == 1 ? "command" : "commands")") }
+        if changes > 0 { parts.append("Changed \(changes) \(changes == 1 ? "file" : "files")") }
+        if tools > 0 { parts.append("Used \(tools) \(tools == 1 ? "tool" : "tools")") }
+        return parts.isEmpty ? "Codex activity" : parts.joined(separator: " · ")
+    }
+
+    private func label(for item: CoFleetTurnItem) -> String {
+        switch item.kind {
+        case .reasoning: "Reasoning"
+        case .command: "Running command"
+        case .fileChange: "Changing files"
+        case .tool: "Using tool"
+        case .userMessage, .assistantMessage, .system: "Activity"
+        }
+    }
+
+    private func symbol(for item: CoFleetTurnItem) -> String {
+        switch item.kind {
+        case .reasoning: "brain"
+        case .command: "terminal"
+        case .fileChange: "pencil.and.outline"
+        case .tool: "wrench.and.screwdriver"
+        case .userMessage: "person.fill"
+        case .assistantMessage: "terminal.fill"
+        case .system: "info.circle"
+        }
+    }
+
+    private func color(for item: CoFleetTurnItem) -> Color {
+        if item.state == .failed { return CoFleetTheme.danger }
+        return item.kind == .fileChange ? CoFleetTheme.green : CoFleetTheme.cyan
+    }
+}
+
 public struct CoFleetTurnItemView: View {
     public var item: CoFleetTurnItem
 
@@ -328,15 +570,21 @@ public struct CoFleetTurnItemView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Label(label, systemImage: symbol)
-                .font(.caption.bold())
+                .font(.caption2.monospaced().weight(.bold))
+                .textCase(.uppercase)
                 .foregroundStyle(tint)
             markdownText(item.text)
                 .textSelection(.enabled)
             if item.state == .streaming { ProgressView().controlSize(.small) }
         }
-        .frame(maxWidth: 680, alignment: .leading)
-        .padding(12)
-        .background(background, in: RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: item.kind == .userMessage ? 560 : 700, alignment: .leading)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
+        .background(background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(tint.opacity(item.kind == .userMessage ? 0.22 : 0.08))
+        }
         .frame(maxWidth: .infinity, alignment: item.kind == .userMessage ? .trailing : .leading)
     }
 
@@ -370,7 +618,9 @@ public struct CoFleetTurnItemView: View {
     }
 
     private var tint: Color { item.kind == .userMessage ? CoFleetTheme.violet : CoFleetTheme.cyan }
-    private var background: Color { item.kind == .userMessage ? CoFleetTheme.violet.opacity(0.16) : CoFleetTheme.elevated }
+    private var background: Color {
+        item.kind == .userMessage ? CoFleetTheme.violet.opacity(0.16) : CoFleetTheme.subtleFill
+    }
 }
 
 public struct CoFleetInteractionView: View {

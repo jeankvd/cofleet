@@ -97,6 +97,30 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(params["cursor"], "codex-cursor")
         self.assertNotIn("thread/read", [item[0] for item in self.codex.requests])
 
+    def test_codex_companion_opens_only_a_verified_host_thread(self) -> None:
+        opened = []
+        self.fixture.close()
+        self.fixture = ServiceFixture(desktop_opener=opened.append)
+        self.service = self.fixture.service
+        self.codex = self.fixture.codex
+        self.device, self.token = self.fixture.pair()
+        self.project = self.fixture.project()
+        self.codex.responses["thread/read"] = {"thread": {"id": "thread-1"}}
+
+        response = self.dispatch("POST", "/v1/sessions/thread-1/open-in-codex")
+
+        self.assertEqual(response.payload, {"sessionID": "thread-1", "opened": True})
+        self.assertEqual(opened, ["thread-1"])
+        self.assertEqual(
+            self.codex.requests[-1],
+            ("thread/read", {"threadId": "thread-1", "includeTurns": False}),
+        )
+
+        with self.assertRaises(APIError) as invalid:
+            self.dispatch("POST", "/v1/sessions/thread!bad/open-in-codex")
+        self.assertEqual(invalid.exception.code, "invalid_session_id")
+        self.assertEqual(opened, ["thread-1"])
+
     def test_session_and_turn_apply_access_mapping_and_idempotency(self) -> None:
         self.codex.responses["thread/start"] = {"thread": {"id": "thread-1", "name": "New"}}
         created = self.dispatch(

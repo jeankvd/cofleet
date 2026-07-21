@@ -14,6 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from urllib.parse import quote
 
 from . import __version__
 from .codex import CodexAppServerSupervisor
@@ -100,6 +101,7 @@ class CoFleetHostService:
         start_maintenance: bool = True,
         invalidate_pending_interactions_on_start: bool = True,
         private_serve_verifier=verify_private_serve,
+        desktop_opener=None,
     ) -> None:
         self.config = config.validate()
         self.private_serve_status = None
@@ -127,6 +129,7 @@ class CoFleetHostService:
                 codex.notification_handler = self._on_codex_notification
             if hasattr(codex, "interaction_handler"):
                 codex.interaction_handler = self._on_codex_interaction
+        self.desktop_opener = desktop_opener or self._open_codex_thread
         self.pets = PetManager(config, self.database)
         self.host_id = self.database.host_id()
         if invalidate_pending_interactions_on_start:
@@ -357,6 +360,9 @@ class CoFleetHostService:
                 "notes": True,
                 "todos": True,
                 "pets": True,
+                "codexDesktopOpen": (
+                    platform.system() == "Darwin" and shutil.which("open") is not None
+                ),
                 "sourceControl": ["git", "plastic"],
             },
         }
@@ -549,6 +555,8 @@ class CoFleetHostService:
             return ServiceResponse(payload={"sessionID": session_id, "title": name})
         if len(rest) == 2 and rest[1] in ("resume", "fork") and method == "POST":
             return self._resume_or_fork(session_id, rest[1], body)
+        if len(rest) == 2 and rest[1] == "open-in-codex" and method == "POST":
+            return self._open_session_in_codex(session_id)
         if len(rest) == 2 and rest[1] in ("archive", "unarchive") and method == "POST":
             rpc_method = "thread/archive" if rest[1] == "archive" else "thread/unarchive"
             self.codex.request(rpc_method, {"threadId": session_id})
@@ -576,6 +584,47 @@ class CoFleetHostService:
             result = self.codex.request("turn/steer", params)
             return ServiceResponse(payload={"turn": result.get("turn", {"id": turn_id})})
         raise APIError(404, "route_not_found", "That session endpoint does not exist.")
+
+    def _open_session_in_codex(self, session_id: str) -> ServiceResponse:
+        session_id = require_string(session_id, "sessionID", 1, 256)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", session_id):
+            raise APIError(422, "invalid_session_id", "The Codex session identifier is invalid.")
+
+        result = self.codex.request(
+            "thread/read", {"threadId": session_id, "includeTurns": False}
+        )
+        thread = result.get("thread")
+        if not isinstance(thread, dict) or thread.get("id") != session_id:
+            raise APIError(404, "session_not_found", "That Codex task is not available on this host.")
+
+        self.desktop_opener(session_id)
+        return ServiceResponse(payload={"sessionID": session_id, "opened": True})
+
+    @staticmethod
+    def _open_codex_thread(session_id: str) -> None:
+        opener = shutil.which("open") if platform.system() == "Darwin" else None
+        if opener is None:
+            raise APIError(
+                501,
+                "codex_desktop_unavailable",
+                "Codex Companion requires the ChatGPT desktop app on a macOS host.",
+            )
+        deep_link = "codex://threads/" + quote(session_id, safe="")
+        try:
+            subprocess.run(
+                [opener, deep_link],
+                check=True,
+                timeout=5,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise APIError(
+                503,
+                "codex_desktop_open_failed",
+                "The host could not open this task in the ChatGPT desktop app.",
+            ) from error
 
     def _resume_or_fork(self, session_id: str, action: str, body: Dict[str, Any]) -> ServiceResponse:
         project_id = require_string(body.get("projectID"), "projectID", 1, 128)

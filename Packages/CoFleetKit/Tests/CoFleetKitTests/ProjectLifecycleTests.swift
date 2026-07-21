@@ -49,6 +49,32 @@ final class ProjectLifecycleTests: XCTestCase {
         )
     }
 
+    func testHostServiceRequestsCodexDesktopOpenWithoutSendingAnExternalURL() async throws {
+        ProjectLifecycleURLProtocol.recorder.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ProjectLifecycleURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let endpoint = try CoFleetHostEndpoint(baseURL: URL(string: "https://sample.tailnet.ts.net")!)
+        let client = CoFleetAPIClient(endpoint: endpoint, session: session) { "sample-token" }
+        let service = CoFleetHostService(client: client)
+
+        try await service.openSessionInCodex(
+            hostID: CoFleetHostID(rawValue: "sample-host"),
+            sessionID: "thread-abc"
+        )
+
+        let requests = ProjectLifecycleURLProtocol.recorder.snapshot()
+        XCTAssertEqual(requests.map { "\($0.method) \($0.path)" }, [
+            "GET /v1/host",
+            "POST /v1/sessions/thread-abc/open-in-codex",
+        ])
+        let request = try XCTUnwrap(requests.last)
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertEqual(request.path, "/v1/sessions/thread-abc/open-in-codex")
+        XCTAssertEqual(request.jsonBody?.count, 0)
+        XCTAssertNil(request.jsonBody?["url"])
+    }
+
     func testFleetStoreRenamePreservesVisibilityAndUserOrder() async throws {
         let hostID = CoFleetHostID(rawValue: "sample-host")
         let repository = ProjectLifecycleRepositoryFake(
@@ -280,12 +306,18 @@ private final class ProjectLifecycleURLProtocol: URLProtocol, @unchecked Sendabl
         let statusCode: Int
         let body: String
         switch (lifecycleRequest.method, lifecycleRequest.path) {
+        case ("GET", "/v1/host"):
+            statusCode = 200
+            body = #"{"host":{"id":"sample-host","displayName":"Sample Mac","platform":"macOS","homePath":"/Users/sample","codexAvailable":true,"capabilities":{"folderCreation":true,"pets":true,"codexDesktopOpen":true,"sourceControl":["git"]}}}"#
         case ("PATCH", "/v1/projects/project-1"):
             statusCode = 200
             body = #"{"project":{"id":"project-1","name":"Renamed Project","canonicalPath":"/Users/sample/work","petID":null}}"#
         case ("DELETE", "/v1/projects/project-1"):
             statusCode = 200
             body = #"{"project":{"id":"project-1","name":"Renamed Project","canonicalPath":"/Users/sample/work","petID":null},"directoryDeleted":false}"#
+        case ("POST", "/v1/sessions/thread-abc/open-in-codex"):
+            statusCode = 200
+            body = #"{"sessionID":"thread-abc","opened":true}"#
         default:
             statusCode = 400
             body = #"{"error":{"code":"unexpected_request","message":"Unexpected method or path."}}"#

@@ -629,6 +629,32 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SessionEnvelope" }
+  /sessions/{sessionID}/open-in-codex:
+    post:
+      tags: [Sessions]
+      operationId: openSessionInCodexDesktop
+      description: >-
+        Verifies the host-scoped Codex task and opens its codex:// thread deep
+        link on this macOS host. The client cannot supply an arbitrary URL.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: The task was handed to the ChatGPT desktop app on the host.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessionID, opened]
+                properties:
+                  sessionID: { type: string }
+                  opened: { const: true }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501":
+          description: This host cannot open the ChatGPT desktop app.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
   /sessions/{sessionID}/fork:
     post:
       tags: [Sessions]

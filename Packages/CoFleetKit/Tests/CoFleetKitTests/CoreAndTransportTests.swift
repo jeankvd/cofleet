@@ -394,6 +394,18 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(limits, [5, 5])
     }
 
+    func testThreadStoreOpensSelectedSessionOnItsOwningHost() async throws {
+        let repository = ThreadRepositoryFake()
+        let store = ThreadStore(repository: repository)
+        let host = CoFleetHostID(rawValue: "sample-host")
+
+        await store.loadInitial(hostID: host, projectID: "project-sample")
+        try await store.openSelectedInCodex()
+
+        let requests = await repository.desktopOpenRequests
+        XCTAssertEqual(requests, [.init(hostID: host, sessionID: "session-0")])
+    }
+
     func testFleetStoreDeduplicatesCanonicalHostAndPath() async {
         let host = CoFleetHostID(rawValue: "sample-host")
         let project = CoFleetProject(hostID: host, displayName: "Sample", canonicalPath: "/tmp/sample")
@@ -626,7 +638,13 @@ private actor TurnRepositoryFake: CoFleetTurnRepository {
 }
 
 private actor ThreadRepositoryFake: CoFleetThreadRepository {
+    struct DesktopOpenRequest: Equatable {
+        var hostID: CoFleetHostID
+        var sessionID: String
+    }
+
     private(set) var requestedLimits: [Int] = []
+    private(set) var desktopOpenRequests: [DesktopOpenRequest] = []
 
     func fetchSessions(
         hostID: CoFleetHostID,
@@ -659,6 +677,10 @@ private actor ThreadRepositoryFake: CoFleetThreadRepository {
 
     func archiveSession(hostID: CoFleetHostID, sessionID: String) async throws {}
     func unarchiveSession(hostID: CoFleetHostID, sessionID: String) async throws {}
+
+    func openSessionInCodex(hostID: CoFleetHostID, sessionID: String) async throws {
+        desktopOpenRequests.append(.init(hostID: hostID, sessionID: sessionID))
+    }
 }
 
 private actor FleetRepositoryFake: CoFleetFleetRepository {

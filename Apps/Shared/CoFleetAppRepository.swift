@@ -303,6 +303,10 @@ public actor CoFleetAppRepository: CoFleetFleetRepository, CoFleetThreadReposito
         try await service(for: hostID).renameSession(hostID: hostID, sessionID: sessionID, title: title)
     }
 
+    public func openSessionInCodex(hostID: CoFleetHostID, sessionID: String) async throws {
+        try await service(for: hostID).openSessionInCodex(hostID: hostID, sessionID: sessionID)
+    }
+
     public func archiveSession(hostID: CoFleetHostID, sessionID: String) async throws {
         try await service(for: hostID).archiveSession(hostID: hostID, sessionID: sessionID)
     }
