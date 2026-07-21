@@ -10,6 +10,8 @@ Usage: Scripts/build.sh <macos|ios-simulator|ios-device|watch|ios-widgets|watch-
 
 Builds only. It never installs or launches an application.
 Set COFLEET_SIGNING=1 to allow configured signing; builds are unsigned by default.
+Set COFLEET_ALLOW_PROVISIONING_UPDATES=1 with signing to let Xcode create or
+refresh development profiles and register the selected device.
 EOF
 }
 
@@ -35,6 +37,8 @@ common=(
 
 if [[ "${COFLEET_SIGNING:-0}" != "1" ]]; then
     common+=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO)
+elif [[ "${COFLEET_ALLOW_PROVISIONING_UPDATES:-0}" == "1" ]]; then
+    common+=(-allowProvisioningUpdates -allowProvisioningDeviceRegistration)
 fi
 
 run_build() {

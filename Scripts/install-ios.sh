@@ -38,7 +38,7 @@ source_app="$derived_data/Build/Products/${configuration}-iphoneos/CoFleet.app"
 [[ -d "$source_app" ]] || cofleet_die "signed device app not found at $source_app; run this script with --build"
 
 xcrun devicectl device install app --device "$device" "$source_app"
-cofleet_log "installed CoFleet and its embedded Watch app on device $device"
+cofleet_log "installed the CoFleet package containing its embedded Watch app on device $device"
 
 if [[ "$launch_after" == true ]]; then
     bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$source_app/Info.plist")"

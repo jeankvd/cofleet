@@ -90,6 +90,14 @@ Scripts/install-macos.sh
 Scripts/install-ios.sh --device <device-identifier>
 ```
 
+For a first signed device build, configure `Local.xcconfig` and explicitly let
+Xcode create or refresh development provisioning records:
+
+```bash
+COFLEET_ALLOW_PROVISIONING_UPDATES=1 Scripts/install-ios.sh \
+  --device <device-identifier> --build --launch
+```
+
 The Xcode project is committed so a clean clone opens immediately. Regenerate
 it after editing `project.yml` and verify that the committed project is current:
 
