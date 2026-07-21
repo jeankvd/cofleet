@@ -6,6 +6,9 @@ turns, transcripts, and approvals. The service owns host pairing, project
 registration, notes, todos, imported pet packages, durable event replay, and
 idempotency records in SQLite.
 
+The macOS and iOS CoFleet applications do not bundle or automatically install
+this service. They are clients of a separately running `cofleet-host` instance.
+
 ## Run locally
 
 ```sh

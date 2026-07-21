@@ -108,6 +108,12 @@ Scripts/check-project-drift.sh
 
 ## Host service
 
+Installing the macOS or iOS CoFleet app does **not** install or start
+`cofleet-host`. Both Apple apps are clients. Install and run the host service
+separately on every computer whose local Codex tasks and project files should
+be available to CoFleet. The macOS client does not need to remain open after
+the background host service is configured.
+
 The Python package lives in `Services/CoFleetHost`. To inspect the CLI directly
 from a checkout:
 
