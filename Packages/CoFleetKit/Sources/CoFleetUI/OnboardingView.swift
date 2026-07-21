@@ -20,9 +20,12 @@ public struct CoFleetOnboardingView: View {
 
     private let pair: PairAction
     private let onPaired: (CoFleetHostInfo) -> Void
-    @State private var endpoint = "https://your-host.tailnet.ts.net"
-    @State private var code = ""
-    @State private var deviceName = "My Apple device"
+    @SceneStorage("cofleet.onboarding.endpoint")
+    private var endpoint = "https://your-host.tailnet.ts.net"
+    @SceneStorage("cofleet.onboarding.code")
+    private var code = ""
+    @SceneStorage("cofleet.onboarding.deviceName")
+    private var deviceName = "My Apple device"
     @State private var isPairing = false
     @State private var errorMessage: String?
 
@@ -103,6 +106,7 @@ public struct CoFleetOnboardingView: View {
                 let host = try await pair(input)
                 await MainActor.run {
                     isPairing = false
+                    code = ""
                     onPaired(host)
                 }
             } catch {
