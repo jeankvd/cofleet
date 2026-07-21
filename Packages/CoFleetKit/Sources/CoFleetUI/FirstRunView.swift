@@ -36,8 +36,7 @@ struct CoFleetFirstRunView: View {
         VStack(spacing: 0) {
             setupHeader(
                 step: 2,
-                title: "Add your first project",
-                detail: "Choose the folder where Codex should work. CoFleet never moves or deletes it."
+                title: "Add your first project"
             )
             if isPreparingPets {
                 ProgressView("Preparing your project…")
@@ -112,29 +111,63 @@ struct CoFleetFirstRunView: View {
         }
     }
 
-    private func setupHeader(step: Int, title: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Text("STEP \(step) OF 3")
-                    .font(.caption.bold())
-                    .foregroundStyle(CoFleetTheme.cyan)
-                Spacer()
-                Text("Connect")
-                Image(systemName: "chevron.right")
-                Text("Project")
-                Image(systemName: "chevron.right")
-                Text("Pet")
+    private func setupHeader(step: Int, title: String, detail: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 6) {
+                ForEach(1...3, id: \.self) { item in
+                    HStack(spacing: 4) {
+                        Image(systemName: stepIcon(for: item, currentStep: step))
+                        Text(stepTitle(for: item))
+                    }
+                    .font(.caption2.weight(item == step ? .bold : .medium))
+                    .foregroundStyle(item <= step ? CoFleetTheme.cyan : Color.secondary)
+
+                    if item < 3 {
+                        Capsule()
+                            .fill(item < step ? CoFleetTheme.cyan : Color.secondary.opacity(0.3))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 2)
+                    }
+                }
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            Text(title)
-                .font(.system(.title2, design: .rounded, weight: .bold))
-            Text(detail)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Image(systemName: step == 2 ? "folder.fill" : "shippingbox.fill")
+                    .foregroundStyle(CoFleetTheme.cyan)
+                Text(title)
+                    .font(.system(.headline, design: .rounded, weight: .bold))
+            }
+
+            if let detail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
-        .padding()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
         .background(CoFleetTheme.surface)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(CoFleetTheme.cyan.opacity(0.18))
+                .frame(height: 1)
+        }
+    }
+
+    private func stepTitle(for step: Int) -> String {
+        switch step {
+        case 1: "Connect"
+        case 2: "Project"
+        default: "Pet"
+        }
+    }
+
+    private func stepIcon(for step: Int, currentStep: Int) -> String {
+        if step < currentStep {
+            return "checkmark.circle.fill"
+        }
+        return step == currentStep ? "\(step).circle.fill" : "\(step).circle"
     }
 
     private var stage: Stage {

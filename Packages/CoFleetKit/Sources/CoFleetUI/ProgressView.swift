@@ -732,7 +732,11 @@ struct CoFleetProjectRegistrationView: View {
                 Divider()
                 registrationBar
             }
-            .navigationTitle("Add Project")
+            .navigationTitle(showsCloseButton ? "Add Project" : "")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(showsCloseButton ? .visible : .hidden, for: .navigationBar)
+            #endif
             .toolbar {
                 if showsCloseButton {
                     ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
@@ -795,7 +799,8 @@ struct CoFleetProjectRegistrationView: View {
                 }
             }
         }
-        .padding()
+        .padding(.horizontal, horizontalSizeClass == .compact ? 12 : 16)
+        .padding(.vertical, horizontalSizeClass == .compact ? 8 : 16)
     }
 
     private var directoryBrowser: some View {
@@ -808,7 +813,7 @@ struct CoFleetProjectRegistrationView: View {
                 }
             }
             .padding(.horizontal)
-            .padding(.vertical, 10)
+            .padding(.vertical, horizontalSizeClass == .compact ? 7 : 10)
 
             List {
                 if let page {
@@ -863,12 +868,10 @@ struct CoFleetProjectRegistrationView: View {
     private var registrationBar: some View {
         Group {
             if horizontalSizeClass == .compact {
-                VStack(alignment: .leading, spacing: 10) {
-                    selectedRootLabel
+                HStack(spacing: 10) {
                     projectNameField
                     addProjectButton
-                        .controlSize(.large)
-                        .frame(maxWidth: .infinity)
+                        .controlSize(.regular)
                 }
             } else {
                 HStack(spacing: 10) {
@@ -880,7 +883,7 @@ struct CoFleetProjectRegistrationView: View {
                 }
             }
         }
-        .padding()
+        .padding(horizontalSizeClass == .compact ? 10 : 16)
     }
 
     private var wideDirectoryToolbar: some View {
@@ -895,19 +898,24 @@ struct CoFleetProjectRegistrationView: View {
     }
 
     private var compactDirectoryToolbar: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 8) {
                 upButton
                 homeButton
                 rootButton
                 Spacer()
+                Button {
+                    showHidden.toggle()
+                } label: {
+                    Image(systemName: showHidden ? "eye.fill" : "eye.slash")
+                }
+                .accessibilityLabel(showHidden ? "Hide Hidden Folders" : "Show Hidden Folders")
+                .buttonStyle(.bordered)
                 newFolderButton
                     .labelStyle(.iconOnly)
                     .accessibilityLabel("New Folder")
             }
             directoryPathLabel
-            Toggle("Show hidden folders", isOn: $showHidden)
-                .toggleStyle(.switch)
         }
     }
 
