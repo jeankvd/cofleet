@@ -683,6 +683,11 @@ public struct CoFleetProjectCard: View {
 struct CoFleetProjectRegistrationView: View {
     @Bindable var fleetStore: FleetStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private let showsCloseButton: Bool
+    private let dismissesOnRegistration: Bool
+    private let onRegistered: (CoFleetProject) -> Void
 
     @State private var selectedHostID: CoFleetHostID?
     @State private var page: CoFleetDirectoryPage?
@@ -694,6 +699,18 @@ struct CoFleetProjectRegistrationView: View {
     @State private var isLoading = false
     @State private var isRegistering = false
     @State private var errorMessage: String?
+
+    init(
+        fleetStore: FleetStore,
+        showsCloseButton: Bool = true,
+        dismissesOnRegistration: Bool = true,
+        onRegistered: @escaping (CoFleetProject) -> Void = { _ in }
+    ) {
+        self.fleetStore = fleetStore
+        self.showsCloseButton = showsCloseButton
+        self.dismissesOnRegistration = dismissesOnRegistration
+        self.onRegistered = onRegistered
+    }
 
     var body: some View {
         NavigationStack {
@@ -717,10 +734,16 @@ struct CoFleetProjectRegistrationView: View {
             }
             .navigationTitle("Add Project")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+                if showsCloseButton {
+                    ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+                }
             }
         }
-        .frame(minWidth: 620, minHeight: 560)
+        .frame(minWidth: sheetMinimumWidth, minHeight: sheetMinimumHeight)
+        #if os(iOS)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        #endif
         .task { await selectInitialHost() }
         .alert("Create Folder", isPresented: $showsCreateFolder) {
             TextField("Folder name", text: $newFolderName)
@@ -777,41 +800,12 @@ struct CoFleetProjectRegistrationView: View {
 
     private var directoryBrowser: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Button {
-                    guard let parent = page?.parentPath else { return }
-                    Task { await loadDirectory(parent) }
-                } label: {
-                    Label("Up", systemImage: "arrow.up")
+            Group {
+                if horizontalSizeClass == .compact {
+                    compactDirectoryToolbar
+                } else {
+                    wideDirectoryToolbar
                 }
-                .disabled(page?.parentPath == nil)
-
-                Button("Home") {
-                    guard let home = selectedHost?.canonicalHome else { return }
-                    Task { await loadDirectory(home) }
-                }
-                Button("/") { Task { await loadDirectory("/") } }
-
-                Text(page?.canonicalPath ?? selectedHost?.canonicalHome ?? "")
-                    .font(.system(.caption, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Toggle("Hidden", isOn: $showHidden)
-                    .toggleStyle(.switch)
-                    .onChange(of: showHidden) { _, _ in
-                        guard let path = page?.canonicalPath else { return }
-                        Task { await loadDirectory(path) }
-                    }
-
-                Button {
-                    newFolderName = ""
-                    showsCreateFolder = true
-                } label: {
-                    Label("New Folder", systemImage: "folder.badge.plus")
-                }
-                .disabled(page == nil || selectedHost?.capabilities.canCreateDirectories != true)
             }
             .padding(.horizontal)
             .padding(.vertical, 10)
@@ -860,38 +854,147 @@ struct CoFleetProjectRegistrationView: View {
             }
             .listStyle(.inset)
         }
+        .onChange(of: showHidden) { _, _ in
+            guard let path = page?.canonicalPath else { return }
+            Task { await loadDirectory(path) }
+        }
     }
 
     private var registrationBar: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Selected root")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                Text(page?.canonicalPath ?? "Choose a readable folder")
-                    .font(.system(.caption, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            TextField("Project name", text: $displayName)
-                .textFieldStyle(.roundedBorder)
-                .frame(minWidth: 180, maxWidth: 260)
-
-            Button {
-                Task { await registerProject() }
-            } label: {
-                if isRegistering {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text("Add Project")
+        Group {
+            if horizontalSizeClass == .compact {
+                VStack(alignment: .leading, spacing: 10) {
+                    selectedRootLabel
+                    projectNameField
+                    addProjectButton
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    selectedRootLabel
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    projectNameField
+                        .frame(minWidth: 180, maxWidth: 260)
+                    addProjectButton
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(page == nil || selectedHostID == nil || displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRegistering)
         }
         .padding()
+    }
+
+    private var wideDirectoryToolbar: some View {
+        HStack(spacing: 8) {
+            upButton
+            homeButton
+            rootButton
+            directoryPathLabel
+            Toggle("Hidden", isOn: $showHidden).toggleStyle(.switch)
+            newFolderButton
+        }
+    }
+
+    private var compactDirectoryToolbar: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                upButton
+                homeButton
+                rootButton
+                Spacer()
+                newFolderButton
+                    .labelStyle(.iconOnly)
+                    .accessibilityLabel("New Folder")
+            }
+            directoryPathLabel
+            Toggle("Show hidden folders", isOn: $showHidden)
+                .toggleStyle(.switch)
+        }
+    }
+
+    private var upButton: some View {
+        Button {
+            guard let parent = page?.parentPath else { return }
+            Task { await loadDirectory(parent) }
+        } label: {
+            Label("Up", systemImage: "arrow.up")
+        }
+        .disabled(page?.parentPath == nil)
+    }
+
+    private var homeButton: some View {
+        Button("Home") {
+            guard let home = selectedHost?.canonicalHome else { return }
+            Task { await loadDirectory(home) }
+        }
+    }
+
+    private var rootButton: some View {
+        Button("/") { Task { await loadDirectory("/") } }
+    }
+
+    private var directoryPathLabel: some View {
+        Text(page?.canonicalPath ?? selectedHost?.canonicalHome ?? "")
+            .font(.system(.caption, design: .monospaced))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var newFolderButton: some View {
+        Button {
+            newFolderName = ""
+            showsCreateFolder = true
+        } label: {
+            Label("New Folder", systemImage: "folder.badge.plus")
+        }
+        .disabled(page == nil || selectedHost?.capabilities.canCreateDirectories != true)
+    }
+
+    private var selectedRootLabel: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Selected root")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+            Text(page?.canonicalPath ?? "Choose a readable folder")
+                .font(.system(.caption, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private var projectNameField: some View {
+        TextField("Project name", text: $displayName)
+            .textFieldStyle(.roundedBorder)
+    }
+
+    private var addProjectButton: some View {
+        Button {
+            Task { await registerProject() }
+        } label: {
+            if isRegistering {
+                ProgressView().controlSize(.small)
+            } else {
+                Text("Add Project")
+            }
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(page == nil || selectedHostID == nil || displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRegistering)
+    }
+
+    private var sheetMinimumWidth: CGFloat? {
+        #if os(macOS)
+        620
+        #else
+        nil
+        #endif
+    }
+
+    private var sheetMinimumHeight: CGFloat? {
+        #if os(macOS)
+        560
+        #else
+        nil
+        #endif
     }
 
     private var selectedHost: CoFleetHostInfo? {
@@ -1002,12 +1105,15 @@ struct CoFleetProjectRegistrationView: View {
         isRegistering = true
         defer { isRegistering = false }
         do {
-            _ = try await fleetStore.registerProject(
+            let project = try await fleetStore.registerProject(
                 hostID: hostID,
                 canonicalPath: root,
                 displayName: name
             )
-            dismiss()
+            onRegistered(project)
+            if dismissesOnRegistration {
+                dismiss()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }

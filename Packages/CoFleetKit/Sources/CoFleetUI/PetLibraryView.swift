@@ -6,6 +6,7 @@ public struct CoFleetPetLibraryView: View {
     @Bindable private var workspaceStore: WorkspaceStore
     private let project: CoFleetProject
     private let onProjectUpdated: (CoFleetProject) -> Void
+    private let onDone: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @State private var manualPath = ""
@@ -15,11 +16,13 @@ public struct CoFleetPetLibraryView: View {
     public init(
         workspaceStore: WorkspaceStore,
         project: CoFleetProject,
-        onProjectUpdated: @escaping (CoFleetProject) -> Void
+        onProjectUpdated: @escaping (CoFleetProject) -> Void,
+        onDone: (() -> Void)? = nil
     ) {
         self.workspaceStore = workspaceStore
         self.project = project
         self.onProjectUpdated = onProjectUpdated
+        self.onDone = onDone
     }
 
     public var body: some View {
@@ -85,7 +88,10 @@ public struct CoFleetPetLibraryView: View {
             .navigationTitle("Project Pet")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        onDone?()
+                        dismiss()
+                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {

@@ -34,6 +34,8 @@ public struct CoFleetRootView: View {
     @State private var destination = CoFleetDestination.progress
     @State private var settings = CoFleetSessionSettings()
     @State private var showsLegal = false
+    @AppStorage("cofleet.onboarding.setupInProgress") private var setupInProgress = false
+    @AppStorage("cofleet.onboarding.setupCompleted") private var setupCompleted = false
 
     public init(
         fleetStore: FleetStore,
@@ -59,6 +61,15 @@ public struct CoFleetRootView: View {
                 CoFleetOnboardingView(pair: pairAction) { _ in
                     Task { await fleetStore.refresh() }
                 }
+            } else if shouldShowFirstRun {
+                CoFleetFirstRunView(
+                    fleetStore: fleetStore,
+                    workspaceStore: workspaceStore
+                ) {
+                    setupCompleted = true
+                    setupInProgress = false
+                }
+                .onAppear { setupInProgress = true }
             } else {
                 #if os(macOS)
                 desktopContent
@@ -74,6 +85,11 @@ public struct CoFleetRootView: View {
         .onChange(of: threadStore.selectedSessionID) { _, _ in
             settings = threadStore.selectedSession?.settings ?? CoFleetSessionSettings()
         }
+    }
+
+    private var shouldShowFirstRun: Bool {
+        !fleetStore.hosts.isEmpty
+            && (setupInProgress || (!setupCompleted && fleetStore.projects.isEmpty))
     }
 
     #if os(macOS)

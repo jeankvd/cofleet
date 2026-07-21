@@ -41,6 +41,9 @@ public struct CoFleetOnboardingView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 8) {
+                    Text("STEP 1 OF 3  •  CONNECT")
+                        .font(.caption.bold())
+                        .foregroundStyle(CoFleetTheme.cyan)
                     Image(systemName: "shippingbox.fill")
                         .font(.system(size: 48, weight: .bold))
                         .foregroundStyle(CoFleetTheme.cyan)
