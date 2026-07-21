@@ -48,7 +48,11 @@ end
 
 begin
   source = File.read(contract_path, encoding: "UTF-8")
-  syntax_tree = Psych.parse_stream(source, contract_path)
+  # Psych 5 accepts the source filename only as a keyword, while the older
+  # system Psych bundled with macOS also supports this keyword form. Keeping
+  # the filename preserves useful parse errors without relying on a legacy
+  # positional signature.
+  syntax_tree = Psych.parse_stream(source, filename: contract_path)
   detect_duplicate_keys(syntax_tree)
   document = YAML.safe_load(
     source,
