@@ -1,6 +1,8 @@
 import CoFleetCore
+import CoreGraphics
 import Foundation
 import XCTest
+@testable import CoFleetUI
 
 final class PetFeatureTests: XCTestCase {
     private let hostID = CoFleetHostID(rawValue: "sample-host")
@@ -46,6 +48,133 @@ final class PetFeatureTests: XCTestCase {
             mediaType: "image/webp",
             data: Data([0x01])
         ))
+    }
+
+    func testAtlasIdentityIsStableAndRejectsCrossPetReuse() throws {
+        let manifest = manifest(version: 2, rows: 11, suffix: "a")
+        let asset = try CoFleetPetAsset(
+            hostID: hostID,
+            petID: manifest.id,
+            assetName: manifest.spritesheetPath,
+            mediaType: "image/webp",
+            data: Data([0x01, 0x02, 0x03])
+        )
+
+        XCTAssertEqual(
+            CoFleetPetSpriteView.atlasIdentity(manifest: manifest, asset: asset),
+            "\(manifest.canonicalIdentity):\(manifest.digest):3"
+        )
+
+        var otherPet = manifest
+        otherPet.id = "another-pet"
+        XCTAssertNil(CoFleetPetSpriteView.atlasIdentity(manifest: otherPet, asset: asset))
+
+        var otherSheet = manifest
+        otherSheet.spritesheetPath = "spritesheet.png"
+        XCTAssertNil(CoFleetPetSpriteView.atlasIdentity(manifest: otherSheet, asset: asset))
+    }
+
+    func testAnimationSkipsTransparentTrailingAtlasCell() throws {
+        let pixels: [UInt8] = [
+            255, 0, 0, 255,
+            0, 255, 0, 255,
+            0, 0, 0, 0,
+        ]
+        let provider = try XCTUnwrap(CGDataProvider(data: Data(pixels) as CFData))
+        let image = try XCTUnwrap(CGImage(
+            width: 3,
+            height: 1,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: 12,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        ))
+        let manifest = CoFleetPetManifest(
+            hostID: hostID,
+            id: "tiny",
+            displayName: "Tiny",
+            spriteVersionNumber: 2,
+            spritesheetPath: "spritesheet.png",
+            frameWidth: 1,
+            frameHeight: 1,
+            columns: 3,
+            rows: 1,
+            digest: String(repeating: "a", count: 64)
+        )
+
+        XCTAssertEqual(
+            CoFleetPetFramePolicy.visibleColumns(in: image, manifest: manifest, row: 0),
+            [0, 1]
+        )
+    }
+
+    func testPetHatchUsesTheRealSkillAndFindsOnlyNewHostPackages() {
+        XCTAssertTrue(CoFleetPendingPetHatch.codexPrompt.contains("$hatch-pet"))
+        XCTAssertTrue(CoFleetPendingPetHatch.codexPrompt.contains("visual QA"))
+        XCTAssertTrue(CoFleetPendingPetHatch.codexPrompt.contains("~/.codex/pets/<pet-id>/"))
+
+        let hatch = CoFleetPendingPetHatch(
+            hostID: hostID,
+            projectID: "project-sample",
+            sessionID: "session-hatch",
+            baselineDigests: ["existing"]
+        )
+        let existing = CoFleetDiscoveredPet(
+            hostID: hostID,
+            sourcePath: "/tmp/cofleet-fixtures/pets/existing/pet.json",
+            displayName: "Existing",
+            spriteVersionNumber: 2,
+            digest: "existing"
+        )
+        let fresh = CoFleetDiscoveredPet(
+            hostID: hostID,
+            sourcePath: "/tmp/cofleet-fixtures/pets/fresh/pet.json",
+            displayName: "Fresh",
+            spriteVersionNumber: 2,
+            digest: "fresh"
+        )
+        let otherHost = CoFleetDiscoveredPet(
+            hostID: CoFleetHostID(rawValue: "other-host"),
+            sourcePath: "/tmp/cofleet-fixtures/other-host/pets/fresh/pet.json",
+            displayName: "Other",
+            spriteVersionNumber: 2,
+            digest: "other"
+        )
+
+        XCTAssertEqual(hatch.newlyDiscoveredPets(in: [existing, fresh, otherHost]), [fresh])
+    }
+
+    func testPetHatchReadsReadyPackageOnlyFromAssistantMessages() {
+        let hatch = CoFleetPendingPetHatch(
+            hostID: hostID,
+            projectID: "project-sample",
+            sessionID: "session-hatch",
+            baselineDigests: []
+        )
+        let items = [
+            CoFleetTurnItem(
+                id: "user",
+                turnID: "turn",
+                kind: .userMessage,
+                text: "COFLEET_PET_READY=/tmp/not-this-one"
+            ),
+            CoFleetTurnItem(
+                id: "assistant",
+                turnID: "turn",
+                kind: .assistantMessage,
+                text: "Finished.\nCOFLEET_PET_READY=/Users/sample/.codex/pets/fresh"
+            ),
+        ]
+
+        XCTAssertEqual(
+            hatch.readyPackagePath(in: items),
+            "/Users/sample/.codex/pets/fresh"
+        )
     }
 
     @MainActor

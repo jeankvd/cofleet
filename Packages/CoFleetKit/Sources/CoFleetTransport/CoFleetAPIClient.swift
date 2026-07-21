@@ -96,7 +96,8 @@ public actor CoFleetAPIClient {
         _ path: String,
         body: Body,
         idempotencyKey: UUID? = nil,
-        authenticated: Bool = true
+        authenticated: Bool = true,
+        timeoutInterval: TimeInterval? = nil
     ) async throws -> Response {
         var request = try await makeRequest(
             method: "POST",
@@ -107,6 +108,9 @@ public actor CoFleetAPIClient {
         )
         if let idempotencyKey {
             request.setValue(idempotencyKey.uuidString, forHTTPHeaderField: "Idempotency-Key")
+        }
+        if let timeoutInterval {
+            request.timeoutInterval = min(75, max(1, timeoutInterval))
         }
         return try await send(request)
     }
@@ -193,7 +197,10 @@ public actor CoFleetAPIClient {
         guard let url = components.url else { throw CoFleetClientError.invalidResponse }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = 30
+        // cofleet-host gives a cold Codex app-server up to 60 seconds to answer.
+        // The client deadline must be longer so it can receive the host's typed
+        // result instead of abandoning a request that is still succeeding.
+        request.timeoutInterval = 75
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if authenticated, let token = try await tokenProvider() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

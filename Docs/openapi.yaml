@@ -242,8 +242,12 @@ paths:
         Durable, bounded SSE stream. Resume with Last-Event-ID. When the cursor
         predates retained history, resetRequired is emitted before retained events.
         Conversation streams expose only provider-neutral turn.updated, turn.item,
-        interaction.pending, interaction.resolved, interaction.expired, and
-        stream.reset envelopes; raw Codex app-server notifications are never exposed.
+        project.activityChanged, interaction.pending, interaction.resolved,
+        interaction.expired, and stream.reset envelopes; raw Codex app-server
+        notifications are never exposed. On hosts running Codex Desktop, rollout
+        filesystem metadata is used only as an invalidation signal for bounded,
+        targeted canonical thread reads; rollout contents and credentials are never
+        parsed by CoFleet.
       parameters:
         - $ref: "#/components/parameters/LastEventID"
         - name: once
@@ -634,8 +638,10 @@ paths:
       tags: [Sessions]
       operationId: openSessionInCodexDesktop
       description: >-
-        Verifies the host-scoped Codex task and opens its codex:// thread deep
-        link on this macOS host. The client cannot supply an arbitrary URL.
+        Validates a bounded opaque task identifier and opens its codex:// thread
+        deep link on this macOS host. The host constructs the URL; the client
+        cannot supply an arbitrary URL. This navigation endpoint does not block
+        on a Codex app-server read.
       parameters:
         - $ref: "#/components/parameters/SessionID"
       responses:
@@ -649,7 +655,6 @@ paths:
                 properties:
                   sessionID: { type: string }
                   opened: { const: true }
-        "404": { $ref: "#/components/responses/NotFound" }
         "501":
           description: This host cannot open the ChatGPT desktop app.
           content:
@@ -1253,6 +1258,7 @@ components:
         name: { type: string }
         rootPath: { type: string }
         canonicalPath: { type: string }
+        currentSessionID: { type: [string, "null"] }
         petID: { type: [string, "null"] }
         sourceControl:
           anyOf:
@@ -1357,12 +1363,17 @@ components:
           required: [type, turn]
           properties:
             type: { const: turn.updated }
+            projectID: { type: string }
+            sessionID: { type: string }
             turn: { type: object, additionalProperties: true }
         - type: object
           required: [type, item]
           properties:
             type: { const: turn.item }
+            projectID: { type: string }
+            sessionID: { type: string }
             item: { type: object, additionalProperties: true }
+        - $ref: "#/components/schemas/CoFleetProjectActivityEvent"
         - type: object
           required: [type, interaction]
           properties:
@@ -1377,6 +1388,23 @@ components:
           required: [type]
           properties:
             type: { const: stream.reset }
+    CoFleetProjectActivityEvent:
+      type: object
+      required: [type, hostID, projectID, sessionID, state, observedAt, source]
+      properties:
+        type: { const: project.activityChanged }
+        hostID: { type: string }
+        projectID: { type: string }
+        sessionID: { type: string }
+        state:
+          type: string
+          enum: [idle, working, waitingForInteraction, failed]
+        turnID: { type: string }
+        itemKind:
+          type: string
+          enum: [userMessage, assistantMessage, reasoning, command, fileChange, tool, approval, question]
+        observedAt: { type: string, format: date-time }
+        source: { type: string, enum: [codexAppServer, codexDesktop] }
     CoFleetNote:
       type: object
       required: [id, projectID, title, markdown, revision, createdAt, updatedAt]

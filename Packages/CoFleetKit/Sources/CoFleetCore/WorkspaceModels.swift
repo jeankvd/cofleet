@@ -212,6 +212,72 @@ public struct CoFleetDiscoveredPet: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+/// Durable handoff between a CoFleet project and the Codex task that is hatching
+/// its next pet. CoFleet records the host catalog before starting the task, then
+/// imports only packages that appear after the hatch begins.
+public struct CoFleetPendingPetHatch: Codable, Identifiable, Hashable, Sendable {
+    public static let storageIdentifier = "cofleet.petHatch.pending.v1"
+    public static let readyPathPrefix = "COFLEET_PET_READY="
+
+    public var id: UUID
+    public var hostID: CoFleetHostID
+    public var projectID: String
+    public var sessionID: String
+    public var baselineDigests: Set<String>
+    public var startedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        hostID: CoFleetHostID,
+        projectID: String,
+        sessionID: String,
+        baselineDigests: Set<String>,
+        startedAt: Date = .now
+    ) {
+        self.id = id
+        self.hostID = hostID
+        self.projectID = projectID
+        self.sessionID = sessionID
+        self.baselineDigests = baselineDigests
+        self.startedAt = startedAt
+    }
+
+    /// The first turn deliberately starts with an interview. The Codex skill owns
+    /// generation, deterministic validation, visual QA, and final packaging.
+    public static let codexPrompt = """
+    Use the $hatch-pet skill for this task.
+
+    We are creating a new Codex-compatible v2 pet for CoFleet. Start by asking me in this chat what pet I want, including its name, appearance, style, personality, and any visual references. Do not begin image generation until I answer or explicitly ask you to choose.
+
+    After I answer, follow the hatch-pet skill completely. Use its image-generation workflow, deterministic validation, visual QA, and packaging rules. Do not create a simplified atlas, invent a different package format, or skip QA. Install the final validated package under ~/.codex/pets/<pet-id>/ with pet.json and spritesheet.webp exactly as the skill requires.
+
+    When packaging succeeds, state the exact absolute package path on its own line as:
+    COFLEET_PET_READY=<absolute-package-path>
+
+    CoFleet will discover, import, and select the validated package automatically.
+    """
+
+    public func newlyDiscoveredPets(in pets: [CoFleetDiscoveredPet]) -> [CoFleetDiscoveredPet] {
+        pets.filter {
+            $0.hostID == hostID && !baselineDigests.contains($0.digest)
+        }
+    }
+
+    public func readyPackagePath(in items: [CoFleetTurnItem]) -> String? {
+        items.reversed().lazy
+            .filter { $0.kind == .assistantMessage }
+            .flatMap { $0.text.components(separatedBy: .newlines).reversed() }
+            .first { $0.trimmingCharacters(in: .whitespaces).hasPrefix(Self.readyPathPrefix) }
+            .map {
+                String(
+                    $0.trimmingCharacters(in: .whitespaces)
+                        .dropFirst(Self.readyPathPrefix.count)
+                ).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .flatMap { $0.isEmpty ? nil : $0 }
+    }
+}
+
 public struct CoFleetPetAsset: Hashable, Sendable {
     public static let maximumByteCount = 16 * 1_024 * 1_024
 

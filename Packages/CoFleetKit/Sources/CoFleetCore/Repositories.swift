@@ -64,6 +64,11 @@ public protocol CoFleetThreadRepository: Sendable {
         archived: Bool
     ) async throws -> CoFleetSessionPage
     func createSession(hostID: CoFleetHostID, projectID: String) async throws -> CoFleetSessionSummary
+    func createSession(
+        hostID: CoFleetHostID,
+        projectID: String,
+        settings: CoFleetSessionSettings
+    ) async throws -> CoFleetSessionSummary
     func resumeSession(
         hostID: CoFleetHostID,
         projectID: String,
@@ -83,6 +88,14 @@ public protocol CoFleetThreadRepository: Sendable {
 }
 
 public extension CoFleetThreadRepository {
+    func createSession(
+        hostID: CoFleetHostID,
+        projectID: String,
+        settings: CoFleetSessionSettings
+    ) async throws -> CoFleetSessionSummary {
+        try await createSession(hostID: hostID, projectID: projectID)
+    }
+
     func openSessionInCodex(hostID: CoFleetHostID, sessionID: String) async throws {
         throw CoFleetClientError.incompatible(
             "Update cofleet-host on this Mac to use Codex Companion mode."
@@ -129,6 +142,15 @@ public protocol CoFleetTurnRepository: Sendable {
         answers: [String: [String]]?
     ) async throws
     func events(hostID: CoFleetHostID, sessionID: String, afterEventID: String?) async throws -> AsyncThrowingStream<CoFleetSequencedTurnEvent, Error>
+}
+
+/// One replayable event stream per paired host. Conversation-specific consumers
+/// can keep using ``CoFleetTurnRepository/events(hostID:sessionID:afterEventID:)``.
+public protocol CoFleetHostEventRepository: Sendable {
+    func hostEvents(
+        hostID: CoFleetHostID,
+        afterEventID: String?
+    ) async throws -> AsyncThrowingStream<CoFleetSequencedHostEvent, Error>
 }
 
 public enum CoFleetNoteSaveResult: Hashable, Sendable {

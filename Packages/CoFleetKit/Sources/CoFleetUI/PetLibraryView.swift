@@ -7,6 +7,7 @@ public struct CoFleetPetLibraryView: View {
     private let project: CoFleetProject
     private let onProjectUpdated: (CoFleetProject) -> Void
     private let onDone: (() -> Void)?
+    private let onHatchWithCodex: (@MainActor () async throws -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @State private var manualPath = ""
@@ -17,22 +18,67 @@ public struct CoFleetPetLibraryView: View {
         workspaceStore: WorkspaceStore,
         project: CoFleetProject,
         onProjectUpdated: @escaping (CoFleetProject) -> Void,
-        onDone: (() -> Void)? = nil
+        onDone: (() -> Void)? = nil,
+        onHatchWithCodex: (@MainActor () async throws -> Void)? = nil
     ) {
         self.workspaceStore = workspaceStore
         self.project = project
         self.onProjectUpdated = onProjectUpdated
         self.onDone = onDone
+        self.onHatchWithCodex = onHatchWithCodex
     }
 
     public var body: some View {
         NavigationStack {
             List {
+                if let onHatchWithCodex {
+                    Section {
+                        Button {
+                            run {
+                                try await onHatchWithCodex()
+                                onDone?()
+                                dismiss()
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "wand.and.stars")
+                                    .font(.title2.weight(.semibold))
+                                    .foregroundStyle(CoFleetTheme.cyan)
+                                    .frame(width: 42, height: 42)
+                                    .background(CoFleetTheme.cyan.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Hatch a Pet with Codex")
+                                        .font(.headline)
+                                    Text("Describe it in a new Codex task, then import it automatically.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isWorking || !workspaceStore.isHostOnline)
+                        .accessibilityIdentifier("cofleet.pet.hatch-with-codex")
+                    } header: {
+                        Text("Create")
+                    } footer: {
+                        Text(
+                            workspaceStore.isHostOnline
+                                ? "Codex uses the host’s $hatch-pet skill and normal approval settings. Only a fully validated package is imported."
+                                : "Reconnect this project’s host to hatch a pet."
+                        )
+                    }
+                }
+
                 Section {
                     if workspaceStore.pets.isEmpty {
                         ContentUnavailableView(
                             "No Imported Pets",
-                            systemImage: "shippingbox",
+                            systemImage: "pawprint",
                             description: Text("Discover Codex pets on this host or import a compatible package path.")
                         )
                     } else {
@@ -138,7 +184,7 @@ public struct CoFleetPetLibraryView: View {
                         size: 48
                     )
                 } else {
-                    Image(systemName: "shippingbox.fill")
+                    Image(systemName: "pawprint.fill")
                         .font(.title2)
                         .frame(width: 48, height: 48)
                         .background(CoFleetTheme.violet.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))

@@ -21,7 +21,13 @@ struct CoFleetIOSApp: App {
                     Task { await watchRelay.publishSnapshot() }
                 }
                 .onChange(of: controller.threadStore.selectedSessionID) {
-                    Task { await watchRelay.publishSnapshot() }
+                    watchRelay.scheduleProjectedSnapshotPublish()
+                }
+                .onChange(of: controller.fleetStore.projects) {
+                    watchRelay.scheduleProjectedSnapshotPublish()
+                }
+                .onChange(of: controller.fleetStore.activityRevision) {
+                    watchRelay.scheduleProjectedSnapshotPublish()
                 }
                 .onChange(of: scenePhase) {
                     guard scenePhase == .active else { return }

@@ -3,6 +3,7 @@ import CoFleetTransport
 import Foundation
 import ImageIO
 import SwiftUI
+import WidgetKit
 
 /// Renders the small, static pet frame carried in widget/Watch snapshots.
 /// Invalid or corrupt previews fall back to CoFleet's neutral placeholder.
@@ -30,7 +31,20 @@ public struct CoFleetPetPreviewView: View {
 
     @ViewBuilder
     private func fullColorImage(_ image: CGImage) -> some View {
-        Image(decorative: image, scale: 1)
+        if #available(iOS 18.0, macOS 15.0, watchOS 11.0, *) {
+            Image(decorative: image, scale: 1, orientation: .up)
+                .resizable()
+                .interpolation(.none)
+                .antialiased(false)
+                .widgetAccentedRenderingMode(.fullColor)
+                .aspectRatio(contentMode: .fit)
+        } else {
+            pixelImage(image)
+        }
+    }
+
+    private func pixelImage(_ image: CGImage) -> some View {
+        Image(decorative: image, scale: 1, orientation: .up)
             .resizable()
             .interpolation(.none)
             .antialiased(false)

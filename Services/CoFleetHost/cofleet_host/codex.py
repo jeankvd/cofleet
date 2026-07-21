@@ -100,7 +100,10 @@ class CodexAppServerSupervisor:
     ) -> Dict[str, Any]:
         if not _skip_start:
             self._ensure_started()
-        if not self._rpc_slots.acquire(timeout=min(2.0, timeout or self.timeout)):
+        # Read-only foreground actions such as “Open in Codex” should briefly
+        # wait behind catalog refreshes instead of failing while a slot is about
+        # to become available. Explicit short test/caller deadlines still win.
+        if not self._rpc_slots.acquire(timeout=min(10.0, timeout or self.timeout)):
             raise CodexUnavailable("Codex is busy; try again shortly.")
         with self._lock:
             request_id = self._next_id

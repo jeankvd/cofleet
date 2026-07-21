@@ -32,6 +32,7 @@ final class ProjectLifecycleTests: XCTestCase {
         XCTAssertEqual(renamed.hostID, hostID)
         XCTAssertEqual(renamed.displayName, "Renamed Project")
         XCTAssertEqual(renamed.canonicalPath, "/Users/sample/work")
+        XCTAssertEqual(renamed.currentSessionID, "thread-current")
 
         let requests = ProjectLifecycleURLProtocol.recorder.snapshot()
         XCTAssertEqual(
@@ -65,7 +66,6 @@ final class ProjectLifecycleTests: XCTestCase {
 
         let requests = ProjectLifecycleURLProtocol.recorder.snapshot()
         XCTAssertEqual(requests.map { "\($0.method) \($0.path)" }, [
-            "GET /v1/host",
             "POST /v1/sessions/thread-abc/open-in-codex",
         ])
         let request = try XCTUnwrap(requests.last)
@@ -73,6 +73,7 @@ final class ProjectLifecycleTests: XCTestCase {
         XCTAssertEqual(request.path, "/v1/sessions/thread-abc/open-in-codex")
         XCTAssertEqual(request.jsonBody?.count, 0)
         XCTAssertNil(request.jsonBody?["url"])
+        XCTAssertEqual(request.timeoutInterval, 8, accuracy: 0.001)
     }
 
     func testFleetStoreRenamePreservesVisibilityAndUserOrder() async throws {
@@ -264,10 +265,12 @@ private struct ProjectLifecycleRequest {
     var method: String
     var path: String
     var jsonBody: [String: Any]?
+    var timeoutInterval: TimeInterval
 
     init(request: URLRequest) {
         method = request.httpMethod ?? "GET"
         path = request.url?.path ?? ""
+        timeoutInterval = request.timeoutInterval
         if let body = request.httpBody ?? Self.read(request.httpBodyStream),
            let object = try? JSONSerialization.jsonObject(with: body),
            let dictionary = object as? [String: Any] {
@@ -311,7 +314,7 @@ private final class ProjectLifecycleURLProtocol: URLProtocol, @unchecked Sendabl
             body = #"{"host":{"id":"sample-host","displayName":"Sample Mac","platform":"macOS","homePath":"/Users/sample","codexAvailable":true,"capabilities":{"folderCreation":true,"pets":true,"codexDesktopOpen":true,"sourceControl":["git"]}}}"#
         case ("PATCH", "/v1/projects/project-1"):
             statusCode = 200
-            body = #"{"project":{"id":"project-1","name":"Renamed Project","canonicalPath":"/Users/sample/work","petID":null}}"#
+            body = #"{"project":{"id":"project-1","name":"Renamed Project","canonicalPath":"/Users/sample/work","currentSessionID":"thread-current","petID":null}}"#
         case ("DELETE", "/v1/projects/project-1"):
             statusCode = 200
             body = #"{"project":{"id":"project-1","name":"Renamed Project","canonicalPath":"/Users/sample/work","petID":null},"directoryDeleted":false}"#

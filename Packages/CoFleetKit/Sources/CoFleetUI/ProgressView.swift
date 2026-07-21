@@ -4,6 +4,52 @@ import SwiftUI
 
 #if !os(watchOS)
 
+struct CoFleetProgressHeaderMetrics: Equatable {
+    var isCompact: Bool
+    var spacing: CGFloat
+    var identityWidth: CGFloat
+    var detailWidth: CGFloat
+    var portraitDiameter: CGFloat
+    var spriteDiameter: CGFloat
+}
+
+enum CoFleetProgressHeaderLayout {
+    /// Mirrors Manada's single-row identity + note layout, while reserving a
+    /// little more room for CoFleet's Codex and session controls.
+    static func metrics(availableWidth: CGFloat) -> CoFleetProgressHeaderMetrics {
+        let width = max(0, availableWidth.isFinite ? availableWidth : 0)
+        let isCompact = width < 420
+        let spacing: CGFloat = isCompact ? 8 : 12
+        let minimumDetailWidth: CGFloat = isCompact ? 124 : 160
+        let desiredIdentityWidth = isCompact
+            ? min(max(width * 0.52, 150), 188)
+            : min(max(width * 0.48, 190), 240)
+        let identityWidth = min(
+            desiredIdentityWidth,
+            max(0, width - spacing - minimumDetailWidth)
+        )
+        return CoFleetProgressHeaderMetrics(
+            isCompact: isCompact,
+            spacing: spacing,
+            identityWidth: identityWidth,
+            detailWidth: max(0, width - spacing - identityWidth),
+            portraitDiameter: isCompact ? 48 : 62,
+            spriteDiameter: isCompact ? 38 : 47
+        )
+    }
+}
+
+enum CoFleetProgressTodoProjection {
+    static func preview(_ todos: [CoFleetTodoItem], limit: Int = 4) -> [CoFleetTodoItem] {
+        let ordered = todos.sorted { lhs, rhs in
+            if lhs.isCompleted != rhs.isCompleted { return !lhs.isCompleted }
+            if lhs.sortIndex != rhs.sortIndex { return lhs.sortIndex < rhs.sortIndex }
+            return lhs.updatedAt < rhs.updatedAt
+        }
+        return Array(ordered.prefix(max(0, limit)))
+    }
+}
+
 public struct CoFleetProgressView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable private var fleetStore: FleetStore
@@ -12,6 +58,9 @@ public struct CoFleetProgressView: View {
     @Bindable private var workspaceStore: WorkspaceStore
     @Binding private var settings: CoFleetSessionSettings
     private let localHostID: CoFleetHostID?
+    private let onOpenProject: (String) -> Void
+    private let onHatchPet: (@MainActor (CoFleetProject) async throws -> Void)?
+    private let isVisible: Bool
 
     @AppStorage("cofleet.progress.codexCompanionMode")
     private var codexCompanionMode = false
@@ -25,8 +74,12 @@ public struct CoFleetProgressView: View {
     @State private var projectPendingRemoval: CoFleetProject?
     @State private var projectOperationID: String?
     @State private var projectLifecycleError: String?
-    @State private var companionPendingProjectID: String?
+    @State private var draftsByProjectID: [String: String] = [:]
+    @State private var sendingProjectID: String?
+    @State private var companionRequestID: UUID?
     @State private var companionError: String?
+    @State private var sendError: String?
+    @State private var dropTargetProjectID: String?
 
     public init(
         fleetStore: FleetStore,
@@ -34,7 +87,10 @@ public struct CoFleetProgressView: View {
         turnStore: TurnStore,
         workspaceStore: WorkspaceStore,
         settings: Binding<CoFleetSessionSettings>,
-        localHostID: CoFleetHostID? = nil
+        localHostID: CoFleetHostID? = nil,
+        isVisible: Bool = true,
+        onOpenProject: @escaping (String) -> Void = { _ in },
+        onHatchPet: (@MainActor (CoFleetProject) async throws -> Void)? = nil
     ) {
         self.fleetStore = fleetStore
         self.threadStore = threadStore
@@ -42,102 +98,57 @@ public struct CoFleetProgressView: View {
         self.workspaceStore = workspaceStore
         _settings = settings
         self.localHostID = localHostID
+        self.isVisible = isVisible
+        self.onOpenProject = onOpenProject
+        self.onHatchPet = onHatchPet
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Agent Progress")
-                        .font(.system(.title2, design: .rounded, weight: .heavy))
-                    if horizontalSizeClass != .compact {
-                        Text("\(fleetStore.visibleProjects.count) visible projects")
-                            .font(.caption.monospaced().weight(.medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                Toggle(isOn: $codexCompanionMode) {
-                    Label(
-                        horizontalSizeClass == .compact ? "Codex" : "Codex Companion",
-                        systemImage: codexCompanionMode ? "iphone.and.arrow.forward" : "iphone"
-                    )
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background(
-                            codexCompanionMode ? CoFleetTheme.cyan.opacity(0.2) : Color.white.opacity(0.07),
-                            in: Capsule()
-                        )
-                }
-                .toggleStyle(.button)
-                .buttonStyle(.plain)
-                .fixedSize()
-                .help("When enabled, tapping a project asks its Mac host to open the current task in Codex")
-                .accessibilityIdentifier("cofleet.progress.codex-companion")
-                Button {
-                    showsAddProject = true
-                } label: {
-                    Label(horizontalSizeClass == .compact ? "" : "Add Project", systemImage: "folder.badge.plus")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background(Color.white.opacity(0.07), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                Button {
-                    showsAgentVisibility.toggle()
-                } label: {
-                    Label(horizontalSizeClass == .compact ? "" : "Projects", systemImage: "slider.horizontal.3")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background(Color.white.opacity(0.07), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .popover(isPresented: $showsAgentVisibility) {
-                    projectVisibilityPopover
-                }
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .background(.ultraThinMaterial)
+        ZStack {
+            Color(red: 0.022, green: 0.036, blue: 0.050)
+                .ignoresSafeArea()
 
-            GeometryReader { proxy in
-                ScrollView {
-                    if fleetStore.visibleProjectGroups.isEmpty {
-                        ContentUnavailableView(
-                            "No Visible Projects",
-                            systemImage: "rectangle.stack.badge.minus",
-                            description: Text("Use Projects to show a registered project, or add a new one.")
-                        )
-                        .frame(maxWidth: .infinity, minHeight: max(260, proxy.size.height * 0.65))
-                    } else {
-                        LazyVStack(alignment: .leading, spacing: 18) {
-                            ForEach(fleetStore.visibleProjectGroups) { group in
-                                VStack(alignment: .leading, spacing: 10) {
-                                    hostGroupHeader(group)
-                                    if !fleetStore.isHostCollapsed(group.hostID) {
-                                        LazyVGrid(columns: columns(for: proxy.size.width), spacing: 12) {
-                                            ForEach(group.projects) { project in
-                                                projectCard(project: project, width: cardWidth(proxy.size.width))
-                                                    .draggable(project.id)
-                                                    .dropDestination(for: String.self) { projectIDs, _ in
-                                                        guard let projectID = projectIDs.first else { return false }
-                                                        return fleetStore.moveProject(projectID, before: project.id)
-                                                    }
-                                            }
+            VStack(spacing: 0) {
+                progressHeader
+                Divider().opacity(0.45)
+
+                GeometryReader { proxy in
+                    ScrollView {
+                        Group {
+                            if fleetStore.visibleProjects.isEmpty {
+                                ContentUnavailableView(
+                                    "No projects in this view",
+                                    systemImage: "rectangle.stack.badge.plus",
+                                    description: Text("Use the Agents menu to choose projects to monitor, or add a new one.")
+                                )
+                                .frame(maxWidth: .infinity, minHeight: max(260, proxy.size.height * 0.65))
+                            } else if CoFleetProgressLayoutPolicy.columnCount(availableWidth: proxy.size.width) == 1 {
+                                LazyVStack(spacing: 12) {
+                                    ForEach(fleetStore.visibleProjects) { project in
+                                        draggableProjectCard(project)
+                                    }
+                                }
+                            } else {
+                                let columns = CoFleetProgressLayoutPolicy.columns(from: fleetStore.visibleProjects)
+                                HStack(alignment: .top, spacing: 12) {
+                                    LazyVStack(spacing: 12) {
+                                        ForEach(columns.left) { project in
+                                            draggableProjectCard(project)
+                                        }
+                                    }
+                                    LazyVStack(spacing: 12) {
+                                        ForEach(columns.right) { project in
+                                            draggableProjectCard(project)
                                         }
                                     }
                                 }
                             }
                         }
-                        .padding(12)
+                        .padding(16)
                     }
                 }
             }
         }
-        .background(CoFleetTheme.background)
         .accessibilityIdentifier("cofleet.destination.progress")
         .sheet(isPresented: $showsSessionPicker) {
             CoFleetSessionPicker(store: threadStore)
@@ -150,7 +161,8 @@ public struct CoFleetProgressView: View {
                 CoFleetPetLibraryView(
                     workspaceStore: workspaceStore,
                     project: project,
-                    onProjectUpdated: fleetStore.applyProjectUpdate
+                    onProjectUpdated: fleetStore.applyProjectUpdate,
+                    onHatchWithCodex: hatchAction(for: project)
                 )
             }
         }
@@ -200,63 +212,169 @@ public struct CoFleetProgressView: View {
         } message: {
             Text(companionError ?? "The host could not open this task in Codex.")
         }
-        .onChange(of: threadStore.sessions.map(\.id)) {
-            openPendingCompanionTaskIfReady()
-        }
-        .onChange(of: threadStore.isLoading) { _, isLoading in
-            if !isLoading { openPendingCompanionTaskIfReady() }
+        .alert("Couldn’t Send Message", isPresented: sendErrorIsPresented) {
+            Button("OK", role: .cancel) { sendError = nil }
+        } message: {
+            Text(sendError ?? "The message could not be sent.")
         }
         .onChange(of: codexCompanionMode) { _, isEnabled in
-            if !isEnabled { companionPendingProjectID = nil }
+            if !isEnabled { companionRequestID = nil }
         }
-        .task {
+        .task(id: "\(visibleProjectsRefreshIdentity):\(isVisible)") {
+            guard isVisible else { return }
             if !fleetStore.hosts.isEmpty && fleetStore.projects.isEmpty {
                 showsAddProject = true
             }
+            // Load the durable baseline once. Subsequent session/message changes
+            // arrive through the host-wide replayable event stream instead of an
+            // 8/60-second polling loop.
+            async let previews: Void = threadStore.refreshLatestSessionPreviews(
+                for: fleetStore.visibleProjects
+            )
+            async let pets: Void = workspaceStore.loadBattlePets(for: fleetStore.visibleProjects)
+            async let todos: Void = workspaceStore.loadBattleTodos(for: fleetStore.visibleProjects)
+            _ = await (previews, pets, todos)
         }
     }
 
+    private var progressHeader: some View {
+        HStack(spacing: horizontalSizeClass == .compact ? 8 : 14) {
+            Text("Agent Progress")
+                .font(.system(.title2, design: .rounded).weight(.heavy))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+            Spacer()
+            if horizontalSizeClass != .compact {
+                Text("\(fleetStore.visibleProjects.count) visible")
+                    .font(.caption.monospaced().weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            Toggle(isOn: $codexCompanionMode) {
+                Group {
+                    if horizontalSizeClass == .compact {
+                        Image(systemName: codexCompanionMode ? "iphone.and.arrow.forward" : "iphone")
+                    } else {
+                        Label(
+                            "Codex Companion",
+                            systemImage: codexCompanionMode ? "iphone.and.arrow.forward" : "iphone"
+                        )
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, horizontalSizeClass == .compact ? 7 : 9)
+                .padding(.vertical, 6)
+                .background(
+                    codexCompanionMode ? CoFleetTheme.cyan.opacity(0.2) : Color.white.opacity(0.07),
+                    in: Capsule()
+                )
+            }
+            .toggleStyle(.button)
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help("When enabled, tapping a project asks its Mac host to open the current task in Codex")
+            .accessibilityIdentifier("cofleet.progress.codex-companion")
+
+            Button {
+                showsAddProject = true
+            } label: {
+                Group {
+                    if horizontalSizeClass == .compact {
+                        Image(systemName: "folder.badge.plus")
+                    } else {
+                        Label("Add Project", systemImage: "folder.badge.plus")
+                    }
+                }
+                    .padding(.horizontal, horizontalSizeClass == .compact ? 7 : 9)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.07), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .accessibilityLabel("Add host project")
+
+            Button {
+                showsAgentVisibility.toggle()
+            } label: {
+                Group {
+                    if horizontalSizeClass == .compact {
+                        Image(systemName: "slider.horizontal.3")
+                    } else {
+                        Label("Agents", systemImage: "slider.horizontal.3")
+                    }
+                }
+                    .padding(.horizontal, horizontalSizeClass == .compact ? 7 : 9)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.07), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .accessibilityLabel("Choose monitored projects")
+            .popover(isPresented: $showsAgentVisibility) {
+                projectVisibilityPopover
+            }
+        }
+        .padding(.horizontal, horizontalSizeClass == .compact ? 12 : 18)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+    }
+
+    private func draggableProjectCard(_ project: CoFleetProject) -> some View {
+        projectCard(project: project)
+            .draggable(project.id) {
+                Label(project.displayName, systemImage: "rectangle.stack")
+                    .font(.headline)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+            }
+            .dropDestination(for: String.self) { projectIDs, _ in
+                guard let projectID = projectIDs.first else { return false }
+                return fleetStore.moveProject(projectID, before: project.id)
+            } isTargeted: { isTargeted in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    if isTargeted {
+                        dropTargetProjectID = project.id
+                    } else if dropTargetProjectID == project.id {
+                        dropTargetProjectID = nil
+                    }
+                }
+            }
+    }
+
     @ViewBuilder
-    private func projectCard(project: CoFleetProject, width: CGFloat) -> some View {
+    private func projectCard(project: CoFleetProject) -> some View {
         let host = fleetStore.hosts.first { $0.id == project.hostID }
         let selected = fleetStore.selectedProjectID == project.id
+        let preview = threadStore.latestPreview(for: project.id)
         CoFleetProjectCard(
             project: project,
             host: host,
-            session: selected ? threadStore.selectedSession : nil,
-            noteMarkdown: selected ? $workspaceStore.noteDraft : .constant(""),
-            todos: selected ? workspaceStore.todos : [],
-            todoDraft: selected ? $workspaceStore.todoDraft : .constant(""),
-            draft: selected ? $turnStore.draft : .constant(""),
+            activity: fleetStore.activity(for: project.id)?.activity,
+            session: threadStore.latestSession(for: project.id),
+            sessionCount: threadStore.sessionsByProjectID[project.id]?.count ?? 0,
+            messages: preview?.messages ?? [],
+            draft: draftBinding(for: project.id),
             selected: selected,
-            canEditWorkspace: selected && workspaceStore.isHostOnline,
-            noteHasChanges: selected && workspaceStore.hasUnsavedNoteDraft,
-            hasNoteConflict: selected && workspaceStore.noteConflict != nil,
-            petManifest: selected ? workspaceStore.pets.first {
-                $0.id == workspaceStore.selectedPetID
-            } : nil,
-            petAsset: selected ? workspaceStore.selectedPetAsset : nil,
-            availableWidth: width,
+            todos: workspaceStore.battleTodosByProjectID[project.id],
+            petManifest: workspaceStore.battlePetManifestsByProjectID[project.id],
+            petAsset: workspaceStore.battlePetAssetsByProjectID[project.id],
             localThreadURL: localURL(for: project),
-            onSelect: { selectOrOpen(project) },
+            isLoadingPreview: threadStore.previewLoadingProjectIDs.contains(project.id),
+            isLoadingTodos: workspaceStore.battleTodoLoadingProjectIDs.contains(project.id),
+            previewError: threadStore.previewErrorsByProjectID[project.id],
+            isSending: sendingProjectID == project.id,
+            isDropTarget: dropTargetProjectID == project.id,
+            onSelect: { Task { await selectOrOpen(project) } },
             onShowSessions: {
-                fleetStore.selectedProjectID = project.id
-                showsSessionPicker = true
+                Task { await showSessions(for: project) }
             },
             onShowPets: {
                 fleetStore.selectedProjectID = project.id
                 showsPetLibrary = true
             },
             onSend: {
-                guard selected else { fleetStore.selectedProjectID = project.id; return }
-                Task { _ = try? await turnStore.send(settings: settings) }
+                Task { await sendMessage(for: project) }
             },
-            onSaveNote: { Task { try? await workspaceStore.saveNote() } },
-            onKeepNoteDraft: { workspaceStore.resolveNoteConflictKeepingDraft() },
-            onUseHostNote: { workspaceStore.resolveNoteConflictUsingHost() },
-            onAddTodo: { Task { _ = try? await workspaceStore.addTodo() } },
-            onToggleTodo: { id in Task { try? await workspaceStore.toggleTodo(id: id) } },
-            onDeleteTodo: { id in Task { try? await workspaceStore.deleteTodo(id: id) } },
             isManagingProject: projectOperationID == project.id,
             onRenameProject: { beginRenaming(project) },
             onRemoveProject: { beginRemoving(project) }
@@ -302,51 +420,133 @@ public struct CoFleetProgressView: View {
         )
     }
 
-    private func selectOrOpen(_ project: CoFleetProject) {
+    private var sendErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { sendError != nil },
+            set: { presented in
+                if !presented { sendError = nil }
+            }
+        )
+    }
+
+    private var visibleProjectsRefreshIdentity: String {
+        fleetStore.visibleProjects
+            .map { "\($0.hostID.rawValue):\($0.id)" }
+            .joined(separator: "|")
+    }
+
+    private func draftBinding(for projectID: String) -> Binding<String> {
+        Binding(
+            get: { draftsByProjectID[projectID, default: ""] },
+            set: { draftsByProjectID[projectID] = $0 }
+        )
+    }
+
+    private func selectOrOpen(_ project: CoFleetProject) async {
         guard codexCompanionMode else {
             fleetStore.selectedProjectID = project.id
+            onOpenProject(project.id)
             return
         }
 
         companionError = nil
-        companionPendingProjectID = project.id
-        if fleetStore.selectedProjectID != project.id {
-            fleetStore.selectedProjectID = project.id
-        } else {
-            openPendingCompanionTaskIfReady()
+        let requestID = UUID()
+        companionRequestID = requestID
+        guard let host = fleetStore.hosts.first(where: { $0.id == project.hostID }) else {
+            companionError = "This project’s host is no longer registered."
+            return
         }
-    }
-
-    private func openPendingCompanionTaskIfReady() {
-        guard let projectID = companionPendingProjectID,
-              fleetStore.selectedProjectID == projectID,
-              !threadStore.isLoading else { return }
-        guard threadStore.loadedProjectID == projectID else { return }
-        guard let project = fleetStore.selectedProject,
-              let host = fleetStore.hosts.first(where: { $0.id == project.hostID }) else { return }
         guard host.reachability == .online else {
-            companionPendingProjectID = nil
             companionError = "\(host.displayName) is offline, so it can’t open this task."
             return
         }
         guard host.capabilities.canNavigateCodexDesktop else {
-            companionPendingProjectID = nil
             companionError = "Update cofleet-host on \(host.displayName), then refresh Progress to enable Codex Companion."
             return
         }
-        guard threadStore.selectedSession != nil else {
-            companionPendingProjectID = nil
+
+        fleetStore.selectedProjectID = project.id
+        let cachedSessions = threadStore.sessionsByProjectID[project.id] ?? []
+        guard let sessionID = CoFleetProgressSessionPolicy.sessionID(
+            for: project,
+            activeSessionID: activeTurnSessionID(for: project),
+            sessions: cachedSessions
+        ) else {
+            companionRequestID = nil
             companionError = "This project does not have a Codex task to open yet."
             return
         }
 
-        companionPendingProjectID = nil
-        Task {
-            do {
-                try await threadStore.openSelectedInCodex()
-            } catch {
-                companionError = error.localizedDescription
+        do {
+            try await threadStore.openInCodex(hostID: project.hostID, sessionID: sessionID)
+        } catch {
+            companionError = error.localizedDescription
+        }
+        if companionRequestID == requestID { companionRequestID = nil }
+    }
+
+    private func showSessions(for project: CoFleetProject) async {
+        fleetStore.selectedProjectID = project.id
+        // Present immediately. `loadInitial` publishes the in-memory project cache
+        // before its first suspension, so the sheet never waits on Codex just to
+        // become visible; the live first page refreshes behind it.
+        showsSessionPicker = true
+        await threadStore.loadInitial(hostID: project.hostID, projectID: project.id)
+    }
+
+    private func sendMessage(for project: CoFleetProject) async {
+        let message = draftsByProjectID[project.id, default: ""]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty, sendingProjectID == nil else { return }
+
+        sendingProjectID = project.id
+        defer { sendingProjectID = nil }
+        sendError = nil
+
+        do {
+            fleetStore.selectedProjectID = project.id
+            await threadStore.loadInitial(hostID: project.hostID, projectID: project.id)
+            guard threadStore.loadedProjectID == project.id else {
+                throw CoFleetClientError.unavailable("The project changed before its Codex tasks finished loading.")
             }
+
+            let sessionID: String
+            let turnSettings: CoFleetSessionSettings
+            if let existingSessionID = CoFleetProgressSessionPolicy.sessionID(
+                for: project,
+                activeSessionID: activeTurnSessionID(for: project),
+                sessions: threadStore.sessions
+            ) {
+                threadStore.selectedSessionID = existingSessionID
+                sessionID = existingSessionID
+                turnSettings = CoFleetProgressSessionPolicy.settings(
+                    for: existingSessionID,
+                    sessions: threadStore.sessions
+                )
+            } else {
+                // Progress has no runtime editor of its own. A new project must not
+                // inherit settings from whichever project happened to be open in
+                // Agent Bay, so start from Codex/host defaults.
+                let session = try await threadStore.createSession(settings: CoFleetSessionSettings())
+                sessionID = session.id
+                turnSettings = session.settings
+            }
+
+            if turnStore.loadedHostID != project.hostID
+                || turnStore.loadedProjectID != project.id
+                || turnStore.loadedSessionID != sessionID {
+                await turnStore.open(hostID: project.hostID, projectID: project.id, sessionID: sessionID)
+            }
+            if let routeError = turnStore.errorMessage {
+                throw CoFleetClientError.unavailable(routeError)
+            }
+
+            turnStore.draft = message
+            _ = try await turnStore.send(settings: turnSettings)
+            draftsByProjectID[project.id] = ""
+            threadStore.updateLoadedProjectPreview(items: turnStore.items)
+        } catch {
+            sendError = "\(project.displayName): \(error.localizedDescription)"
         }
     }
 
@@ -355,6 +555,19 @@ public struct CoFleetProgressView: View {
         projectLifecycleError = nil
         renameDraft = project.displayName
         projectPendingRename = project
+    }
+
+    private func hatchAction(
+        for project: CoFleetProject
+    ) -> (@MainActor () async throws -> Void)? {
+        guard let onHatchPet else { return nil }
+        return { try await onHatchPet(project) }
+    }
+
+    private func activeTurnSessionID(for project: CoFleetProject) -> String? {
+        guard turnStore.loadedHostID == project.hostID,
+              turnStore.loadedProjectID == project.id else { return nil }
+        return turnStore.loadedSessionID
     }
 
     private func beginRemoving(_ project: CoFleetProject) {
@@ -387,56 +600,8 @@ public struct CoFleetProgressView: View {
 
     private func localURL(for project: CoFleetProject) -> URL? {
         guard let localHostID,
-              let session = threadStore.selectedSession,
-              session.projectID == project.id else { return nil }
+              let session = threadStore.latestSession(for: project.id) else { return nil }
         return CodexDeepLinkResolver.localThreadURL(session: session, localHostID: localHostID)
-    }
-
-    private func columns(for width: CGFloat) -> [GridItem] {
-        let count = CoFleetResponsivePolicy.progressColumns(availableWidth: width).rawValue
-        return Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .top), count: count)
-    }
-
-    private func cardWidth(_ width: CGFloat) -> CGFloat {
-        CoFleetResponsivePolicy.progressColumns(availableWidth: width) == .two
-            ? max(320, (width - 36) / 2)
-            : max(280, width - 24)
-    }
-
-    private func hostGroupHeader(_ group: CoFleetProjectGroup) -> some View {
-        let collapsed = fleetStore.isHostCollapsed(group.hostID)
-        let name = group.host?.displayName ?? "Unknown host"
-        let reachability = group.host?.reachability ?? .unknown
-        return Button {
-            fleetStore.toggleHostCollapsed(group.hostID)
-        } label: {
-            HStack(spacing: 9) {
-                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 12)
-                Circle()
-                    .fill(reachabilityColor(reachability))
-                    .frame(width: 8, height: 8)
-                Text(name)
-                    .font(.system(.headline, design: .rounded, weight: .semibold))
-                Text(reachability.rawValue.capitalized)
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(group.projects.count) \(group.projects.count == 1 ? "project" : "projects")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .contentShape(Rectangle())
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(CoFleetTheme.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(name), \(group.projects.count) projects")
-        .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
-        .accessibilityHint(collapsed ? "Expands this host" : "Collapses this host")
     }
 
     private var projectVisibilityPopover: some View {
@@ -511,320 +676,770 @@ public struct CoFleetProgressView: View {
         }
     }
 
-    private func reachabilityColor(_ reachability: CoFleetReachability) -> Color {
-        switch reachability {
-        case .online: CoFleetTheme.green
-        case .degraded: CoFleetTheme.orange
-        case .offline, .unknown: .gray
+}
+
+enum CoFleetProgressLayoutPolicy {
+    private static let horizontalContentInset: CGFloat = 32
+    private static let columnSpacing: CGFloat = 12
+    private static let minimumTwoColumnCardWidth: CGFloat = 410
+
+    static func columnCount(availableWidth: CGFloat) -> Int {
+        let contentWidth = max(0, availableWidth - horizontalContentInset)
+        let twoColumnCardWidth = (contentWidth - columnSpacing) / 2
+        return twoColumnCardWidth >= minimumTwoColumnCardWidth ? 2 : 1
+    }
+
+    static func columns<T>(from items: [T]) -> (left: [T], right: [T]) {
+        var left: [T] = []
+        var right: [T] = []
+        for (index, item) in items.enumerated() {
+            if index.isMultiple(of: 2) {
+                left.append(item)
+            } else {
+                right.append(item)
+            }
         }
+        return (left, right)
+    }
+}
+
+/// Preserves the host's canonical current task and an already-open in-app task,
+/// then falls back to the freshest actual Codex task. The first history page is
+/// enough for that fallback, but not for the canonical ID which may be older.
+enum CoFleetProgressSessionPolicy {
+    static func sessionID(
+        for project: CoFleetProject,
+        activeSessionID: String?,
+        sessions: [CoFleetSessionSummary]
+    ) -> String? {
+        if let currentSessionID = normalized(project.currentSessionID) {
+            return currentSessionID
+        }
+        if let activeSessionID = normalized(activeSessionID) {
+            return activeSessionID
+        }
+        return sessions.filter { session in
+            session.hostID == project.hostID
+                && session.projectID == project.id
+        }
+        .max(by: { $0.updatedAt < $1.updatedAt })?
+        .id
+    }
+
+    static func settings(
+        for sessionID: String,
+        sessions: [CoFleetSessionSummary]
+    ) -> CoFleetSessionSettings {
+        sessions.first(where: { $0.id == sessionID })?.settings
+            ?? CoFleetSessionSettings()
+    }
+
+    private static func normalized(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 }
 
 public struct CoFleetProjectCard: View {
     public var project: CoFleetProject
     public var host: CoFleetHostInfo?
+    public var activity: CoFleetProjectActivity?
     public var session: CoFleetSessionSummary?
-    @Binding public var noteMarkdown: String
-    public var todos: [CoFleetTodoItem]
-    @Binding public var todoDraft: String
+    public var sessionCount: Int
+    public var messages: [CoFleetTurnItem]
     @Binding public var draft: String
     public var selected: Bool
-    public var canEditWorkspace: Bool
-    public var noteHasChanges: Bool
-    public var hasNoteConflict: Bool
+    public var todos: [CoFleetTodoItem]?
     public var petManifest: CoFleetPetManifest?
     public var petAsset: CoFleetPetAsset?
-    public var availableWidth: CGFloat
     public var localThreadURL: URL?
+    public var isLoadingPreview: Bool
+    public var isLoadingTodos: Bool
+    public var previewError: String?
+    public var isSending: Bool
+    public var isDropTarget: Bool
     public var onSelect: () -> Void
     public var onShowSessions: () -> Void
     public var onShowPets: () -> Void
     public var onSend: () -> Void
-    public var onSaveNote: () -> Void
-    public var onKeepNoteDraft: () -> Void
-    public var onUseHostNote: () -> Void
-    public var onAddTodo: () -> Void
-    public var onToggleTodo: (String) -> Void
-    public var onDeleteTodo: (String) -> Void
     public var isManagingProject: Bool
     public var onRenameProject: () -> Void
     public var onRemoveProject: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovered = false
+    @State private var pulse = false
+    @State private var selectionExclusionFrames: [CGRect] = []
+
     public init(
         project: CoFleetProject,
         host: CoFleetHostInfo?,
+        activity: CoFleetProjectActivity? = nil,
         session: CoFleetSessionSummary?,
-        noteMarkdown: Binding<String>,
-        todos: [CoFleetTodoItem],
-        todoDraft: Binding<String>,
+        sessionCount: Int = 0,
+        messages: [CoFleetTurnItem],
         draft: Binding<String>,
         selected: Bool,
-        canEditWorkspace: Bool,
-        noteHasChanges: Bool,
-        hasNoteConflict: Bool,
+        todos: [CoFleetTodoItem]? = nil,
         petManifest: CoFleetPetManifest?,
         petAsset: CoFleetPetAsset?,
-        availableWidth: CGFloat,
         localThreadURL: URL?,
+        isLoadingPreview: Bool = false,
+        isLoadingTodos: Bool = false,
+        previewError: String? = nil,
+        isSending: Bool = false,
+        isDropTarget: Bool = false,
         onSelect: @escaping () -> Void,
         onShowSessions: @escaping () -> Void,
         onShowPets: @escaping () -> Void,
         onSend: @escaping () -> Void,
-        onSaveNote: @escaping () -> Void,
-        onKeepNoteDraft: @escaping () -> Void,
-        onUseHostNote: @escaping () -> Void,
-        onAddTodo: @escaping () -> Void,
-        onToggleTodo: @escaping (String) -> Void,
-        onDeleteTodo: @escaping (String) -> Void,
         isManagingProject: Bool = false,
         onRenameProject: @escaping () -> Void = {},
         onRemoveProject: @escaping () -> Void = {}
     ) {
         self.project = project
         self.host = host
+        self.activity = activity
         self.session = session
-        _noteMarkdown = noteMarkdown
-        self.todos = todos
-        _todoDraft = todoDraft
+        self.sessionCount = sessionCount
+        self.messages = messages
         _draft = draft
         self.selected = selected
-        self.canEditWorkspace = canEditWorkspace
-        self.noteHasChanges = noteHasChanges
-        self.hasNoteConflict = hasNoteConflict
+        self.todos = todos
         self.petManifest = petManifest
         self.petAsset = petAsset
-        self.availableWidth = availableWidth
         self.localThreadURL = localThreadURL
+        self.isLoadingPreview = isLoadingPreview
+        self.isLoadingTodos = isLoadingTodos
+        self.previewError = previewError
+        self.isSending = isSending
+        self.isDropTarget = isDropTarget
         self.onSelect = onSelect
         self.onShowSessions = onShowSessions
         self.onShowPets = onShowPets
         self.onSend = onSend
-        self.onSaveNote = onSaveNote
-        self.onKeepNoteDraft = onKeepNoteDraft
-        self.onUseHostNote = onUseHostNote
-        self.onAddTodo = onAddTodo
-        self.onToggleTodo = onToggleTodo
-        self.onDeleteTodo = onDeleteTodo
         self.isManagingProject = isManagingProject
         self.onRenameProject = onRenameProject
         self.onRemoveProject = onRemoveProject
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if CoFleetResponsivePolicy.cardHeaderPlacesNotesBesideIdentity(availableWidth: availableWidth) {
-                HStack(alignment: .top, spacing: 14) {
-                    identity
-                    notes.frame(maxWidth: .infinity, minHeight: 88)
-                }
-            } else {
-                identity
-                notes.frame(minHeight: 82)
-            }
+        ZStack(alignment: .topLeading) {
+            cardSurface
 
-            if let session {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock.arrow.circlepath")
-                        Text("LAST SESSION")
-                            .tracking(0.7)
-                        Text("·")
-                        Text(session.updatedAt.formatted(.relative(presentation: .named)))
-                    }
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    if let preview = session.preview {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(session.title)
-                                .font(.caption2.monospaced().weight(.bold))
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
-                            Text(preview)
-                                .font(.callout.weight(.medium))
-                                .lineLimit(3)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 9)
-                        .background(CoFleetTheme.subtleFill, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                .stroke(CoFleetTheme.hairline)
+            VStack(alignment: .leading, spacing: 11) {
+                projectHeader
+
+                if let activityLabel {
+                    HStack(spacing: 8) {
+                        Image(systemName: progressState.needsAttention ? "exclamationmark.triangle.fill" : "waveform.path")
+                            .foregroundStyle(progressColor)
+                        Text(activityLabel)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                        if progressState == .working {
+                            Spacer(minLength: 4)
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(progressColor)
                         }
                     }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            HStack(spacing: 8) {
-                TextField("Message \(project.displayName)…", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .padding(10)
-                    .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(progressColor.opacity(0.11), in: RoundedRectangle(cornerRadius: 9))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(CoFleetTheme.hairline)
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(progressColor.opacity(0.2))
                     }
-                    .disabled(!selected)
-                    .onSubmit(onSend)
-                Button(action: onSend) {
-                    Image(systemName: "arrow.up")
-                        .font(.headline.bold())
-                        .frame(width: 34, height: 34)
-                        .background(CoFleetTheme.cyan, in: Circle())
+                    .allowsHitTesting(false)
                 }
-                .buttonStyle(.plain)
-                .disabled(!selected || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                conversationPreview
+                    .allowsHitTesting(false)
+
+                composer
+            }
+            .padding(.horizontal, 17)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        // Keep selection on the actual card container. The old iOS Button lived
+        // behind the visible VStack, so most of the card intercepted its touches.
+        // A simultaneous spatial tap lets descendant controls keep their native
+        // gestures; measured exclusion frames prevent their taps from also
+        // selecting the card.
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .coordinateSpace(name: selectionCoordinateSpace)
+        .onPreferenceChange(CoFleetCardSelectionExclusionKey.self) {
+            selectionExclusionFrames = $0
+        }
+        .simultaneousGesture(
+            SpatialTapGesture(coordinateSpace: .named(selectionCoordinateSpace))
+                .onEnded { value in
+                    guard !selectionExclusionFrames.contains(where: { $0.contains(value.location) }) else {
+                        return
+                    }
+                    onSelect()
+                }
+        )
+        .accessibilityAction(named: "Open \(project.displayName)", onSelect)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .shadow(color: accent.opacity(hovered ? 0.13 : 0), radius: 16, y: 5)
+        .scaleEffect(hovered && !reduceMotion ? 1.006 : 1)
+        .animation(.easeOut(duration: 0.16), value: hovered)
+        .onHover { hovered = $0 }
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(alignment: .top) {
+            if isDropTarget {
+                Capsule()
+                    .fill(accent)
+                    .frame(height: 4)
+                    .padding(.horizontal, 9)
+                    .offset(y: -7)
+                    .shadow(color: accent.opacity(0.8), radius: 7)
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                    .allowsHitTesting(false)
             }
         }
-        .padding(16)
-        .background(
-            selected ? CoFleetTheme.cyan.opacity(0.075) : CoFleetTheme.panelFill,
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(selected ? CoFleetTheme.cyan.opacity(0.7) : CoFleetTheme.hairline, lineWidth: selected ? 1.5 : 1)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.25).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
     }
 
-    private var identity: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
+    private var cardSurface: some View {
+        RoundedRectangle(cornerRadius: 18)
+            .fill(
+                selected
+                    ? accent.opacity(0.15)
+                    : Color.white.opacity(hovered ? 0.085 : 0.052)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(
+                        selected ? accent.opacity(0.65) : progressColor.opacity(progressState.needsAttention ? 0.5 : 0.14)
+                    )
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 18))
+    }
+
+    @ViewBuilder
+    private var conversationPreview: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let session {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.arrow.circlepath")
+                    Text("LAST SESSION")
+                        .tracking(0.7)
+                    Text("·")
+                    Text(session.updatedAt.formatted(.relative(presentation: .named)))
+                }
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 2)
+                .accessibilityLabel("Last session, \(session.title), \(session.updatedAt.formatted(.relative(presentation: .named)))")
+
+                if messages.isEmpty {
+                    if let previewError {
+                        Label(previewError, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(CoFleetTheme.orange)
+                            .lineLimit(2)
+                    } else {
+                        emptyConversationLabel(
+                            isLoadingPreview ? "Loading latest messages…" : "No chat history yet",
+                            loading: isLoadingPreview
+                        )
+                    }
+                } else {
+                    ForEach(messages) { message in
+                        CoFleetProgressMessagePreview(
+                            item: message,
+                            agentName: project.displayName,
+                            accent: accent
+                        )
+                    }
+                }
+            } else if isLoadingPreview {
+                emptyConversationLabel("Loading latest Codex task…", loading: true)
+            } else if let previewError {
+                Label(previewError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(CoFleetTheme.orange)
+                    .lineLimit(2)
+            } else {
+                emptyConversationLabel("No chat history yet", loading: false)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func emptyConversationLabel(_ title: String, loading: Bool) -> some View {
+        HStack(spacing: 8) {
+            if loading {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .foregroundStyle(.tertiary)
+            }
+            Text(title)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .padding(.horizontal, 11)
+        .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 11))
+    }
+
+    private var projectHeader: some View {
+        GeometryReader { proxy in
+            let metrics = CoFleetProgressHeaderLayout.metrics(availableWidth: proxy.size.width)
+            HStack(alignment: .top, spacing: metrics.spacing) {
+                identity(metrics: metrics)
+                    .frame(width: metrics.identityWidth, alignment: .leading)
+                todoPreview
+                    .frame(width: metrics.detailWidth)
+                    .frame(minHeight: 92, maxHeight: 92)
+            }
+        }
+        .frame(height: 92)
+    }
+
+    private func identity(metrics: CoFleetProgressHeaderMetrics) -> some View {
+        HStack(alignment: .center, spacing: metrics.isCompact ? 8 : 11) {
+            portrait(metrics: metrics)
+
+            VStack(alignment: .leading, spacing: metrics.isCompact ? 4 : 6) {
+                Text(project.displayName)
+                    .font(.system(metrics.isCompact ? .headline : .title3, design: .rounded).weight(.heavy))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
+
+                HStack(spacing: metrics.isCompact ? 4 : 7) {
+                    Text((host?.displayName ?? "Unknown host").uppercased())
+                        .font(.system(size: metrics.isCompact ? 10.5 : 13.5, weight: .bold, design: .monospaced))
+                        .foregroundStyle(accent.opacity(0.9))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.55)
+                    Text(progressState.label)
+                        .font(.system(size: metrics.isCompact ? 10.5 : 13.5, weight: .bold))
+                        .foregroundStyle(progressColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.55)
+                        .padding(.horizontal, metrics.isCompact ? 6 : 10.5)
+                        .padding(.vertical, metrics.isCompact ? 3 : 4.5)
+                        .background(progressColor.opacity(0.14), in: Capsule())
+                }
+
+                HStack(spacing: metrics.isCompact ? 3 : 5) {
+                    codexPill(compact: metrics.isCompact)
+                    Button(action: onShowSessions) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: metrics.isCompact ? 12 : 16, weight: .bold))
+                            if sessionCount > 0 {
+                                Text("\(sessionCount)")
+                                    .font(.system(size: metrics.isCompact ? 12 : 16, weight: .bold, design: .rounded))
+                                    .monospacedDigit()
+                            }
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, metrics.isCompact ? 7 : 12)
+                        .padding(.vertical, metrics.isCompact ? 4 : 6)
+                        .background(Color.white.opacity(0.07), in: Capsule())
+                        .overlay { Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1) }
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .cofleetCardSelectionExclusion(in: selectionCoordinateSpace)
+                    .help("Browse and switch sessions")
+                    .accessibilityLabel("Session history for \(project.displayName)")
+                    .accessibilityValue("\(sessionCount) session\(sessionCount == 1 ? "" : "s")")
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var todoPreview: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: "checklist")
+                    .foregroundStyle(accent)
+                Text("TODOS")
+                    .font(.system(size: 9, weight: .black, design: .monospaced))
+                    .tracking(0.7)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 2)
+                projectMenu
+            }
+
+            if isLoadingTodos, todos == nil {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Loading…")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let todos, !todos.isEmpty {
+                ForEach(CoFleetProgressTodoProjection.preview(todos, limit: 3)) { todo in
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Image(systemName: todo.isCompleted ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(todo.isCompleted ? CoFleetTheme.green : .secondary)
+                        Text(todo.title)
+                            .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                            .foregroundStyle(todo.isCompleted ? Color.secondary : Color.primary.opacity(0.9))
+                            .strikethrough(todo.isCompleted)
+                            .lineLimit(1)
+                    }
+                }
+            } else {
+                Text("Add two todos to unlock Battle.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.leading, 9)
+        .padding(.trailing, 5)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color.black.opacity(0.13), in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(accent.opacity(0.14))
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Project todos")
+    }
+
+    private var projectMenu: some View {
+        Menu {
+            Button(action: onShowPets) {
+                Label("Choose Pet", systemImage: "pawprint")
+            }
+            if let localThreadURL {
+                Link(destination: localThreadURL) {
+                    Label("Open in Codex", systemImage: "arrow.up.forward.app")
+                }
+            }
+            Button(action: onRenameProject) {
+                Label("Rename Project", systemImage: "pencil")
+            }
+            Divider()
+            Button(role: .destructive, action: onRemoveProject) {
+                Label("Remove Project", systemImage: "minus.circle")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isManagingProject)
+        .cofleetCardSelectionExclusion(in: selectionCoordinateSpace)
+        .accessibilityLabel("Manage \(project.displayName)")
+    }
+
+    private func portrait(metrics: CoFleetProgressHeaderMetrics) -> some View {
+        ZStack {
+            Circle().fill(accent.opacity(0.18))
+            Circle().stroke(accent.opacity(0.32), lineWidth: 1)
+            if petManifest != nil, petAsset != nil {
                 CoFleetPetSpriteView(
                     name: project.displayName,
                     manifest: petManifest,
                     asset: petAsset,
-                    action: project.state.actionIndicator
+                    action: activity?.actionIndicator ?? project.state.actionIndicator,
+                    size: metrics.spriteDiameter
                 )
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(project.displayName)
-                        .font(.system(.headline, design: .rounded, weight: .bold))
-                    Text(host?.displayName ?? "Unknown host")
-                        .font(.caption.monospaced().weight(.medium))
-                        .foregroundStyle(.secondary)
-                    CoFleetStatusIndicators(
-                        reachability: host?.reachability ?? .unknown,
-                        action: project.state.actionIndicator,
-                        sourceControl: project.sourceControl
-                    )
-                }
-            }
-            HStack(spacing: 12) {
-                Button(action: onShowSessions) {
-                    Label("History", systemImage: "clock.arrow.circlepath")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Session history")
-                Button(action: onShowPets) {
-                    Label("Pet", systemImage: "shippingbox")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Choose pet")
-                if let localThreadURL {
-                    Link(destination: localThreadURL) {
-                        Label("Codex", systemImage: "arrow.up.forward.app")
-                            .labelStyle(.iconOnly)
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Open in Codex")
-                }
-                Menu {
-                    Button(action: onRenameProject) {
-                        Label("Rename Project", systemImage: "pencil")
-                    }
-                    Divider()
-                    Button(role: .destructive, action: onRemoveProject) {
-                        Label("Remove Project", systemImage: "minus.circle")
-                    }
-                } label: {
-                    Label("Manage", systemImage: "ellipsis.circle")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-                .disabled(isManagingProject)
-                .accessibilityLabel("Manage \(project.displayName)")
+                .scaleEffect(progressState == .working && pulse && !reduceMotion ? 1.055 : 1)
+            } else {
+                Image(systemName: "pawprint.fill")
+                    .font(.system(size: metrics.isCompact ? 20 : 25, weight: .bold))
+                    .foregroundStyle(accent.opacity(0.88))
+                    .scaleEffect(progressState == .working && pulse && !reduceMotion ? 1.055 : 1)
             }
         }
-        .frame(minWidth: 170, alignment: .leading)
+        .frame(width: metrics.portraitDiameter, height: metrics.portraitDiameter)
+        .shadow(
+            color: progressColor.opacity(progressState == .working ? (pulse ? 0.72 : 0.34) : 0.22),
+            radius: progressState == .working ? (pulse ? 15 : 7) : 5
+        )
+        .overlay(alignment: .bottomTrailing) {
+            Circle()
+                .fill(progressColor)
+                .frame(width: 12, height: 12)
+                .overlay(Circle().stroke(Color.black.opacity(0.8), lineWidth: 2))
+                .shadow(color: progressColor.opacity(0.85), radius: progressState == .working ? 6 : 2)
+        }
+        .animation(.easeInOut(duration: 1.25), value: pulse)
+        .accessibilityLabel("\(project.displayName) avatar, \(progressState.label.lowercased())")
     }
 
-    private var notes: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Notes", systemImage: "note.text")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if !canEditWorkspace && selected {
-                    Label("Offline draft", systemImage: "icloud.slash")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Button("Save", action: onSaveNote)
-                    .buttonStyle(.borderless)
-                    .disabled(!canEditWorkspace || !noteHasChanges || hasNoteConflict)
-            }
-            CoFleetRichNoteEditor(markdown: $noteMarkdown, isReadOnly: !selected)
-                .frame(minHeight: 82)
-
-            if hasNoteConflict {
-                VStack(alignment: .leading, spacing: 5) {
-                    Label("The host note changed. Reconcile before saving.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(CoFleetTheme.orange)
-                    HStack {
-                        Button("Keep my draft", action: onKeepNoteDraft)
-                        Button("Use host note", action: onUseHostNote)
-                    }
-                    .buttonStyle(.borderless)
-                }
-            }
-
-            Divider()
-            Label("Todos", systemImage: "checklist")
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
-            ForEach(todos.prefix(5)) { todo in
-                HStack(spacing: 7) {
-                    Button { onToggleTodo(todo.id) } label: {
-                        Image(systemName: todo.isCompleted ? "checkmark.square.fill" : "square")
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canEditWorkspace)
-                    Text(todo.title)
-                        .font(.caption)
-                        .strikethrough(todo.isCompleted)
-                        .lineLimit(2)
-                    Spacer()
-                    Button(role: .destructive) { onDeleteTodo(todo.id) } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canEditWorkspace)
-                }
-            }
-            HStack(spacing: 6) {
-                TextField("Add todo…", text: $todoDraft)
-                    .textFieldStyle(.plain)
-                    .onSubmit(onAddTodo)
-                Button(action: onAddTodo) { Image(systemName: "plus.circle.fill") }
-                    .buttonStyle(.plain)
-                    .disabled(!canEditWorkspace || todoDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .padding(7)
-            .background(Color.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 9))
-            .disabled(!selected)
+    @ViewBuilder
+    private func codexPill(compact: Bool) -> some View {
+        let content = HStack(spacing: 8) {
+            CoFleetProgressCodexMark()
+                .frame(width: compact ? 15 : 22, height: compact ? 15 : 22)
+            Text("Codex")
+                .font(.system(size: compact ? 12 : 16, weight: .bold, design: .rounded))
         }
-        .padding(10)
-        .background(CoFleetTheme.subtleFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(CoFleetTheme.hairline)
+        .foregroundStyle(CoFleetTheme.green)
+        .padding(.horizontal, compact ? 7 : 12)
+        .padding(.vertical, compact ? 4 : 6)
+        .background(CoFleetTheme.green.opacity(0.11), in: Capsule())
+        .overlay { Capsule().stroke(CoFleetTheme.green.opacity(0.24), lineWidth: 1) }
+        .contentShape(Capsule())
+
+        if let localThreadURL {
+            Link(destination: localThreadURL) { content }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .cofleetCardSelectionExclusion(in: selectionCoordinateSpace)
+                .help("Open this task in Codex")
+        } else {
+            content
+                .fixedSize()
+                .accessibilityLabel("Codex harness")
+        }
+    }
+
+    private var composer: some View {
+        let hasDraft = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let canSubmit = hasDraft && !isSending
+        return HStack(alignment: .bottom, spacing: 8) {
+            TextField("Message \(project.displayName)…", text: $draft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .submitLabel(.send)
+                .lineLimit(1...3)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(accent.opacity(0.14)))
+                .onSubmit(onSend)
+
+            Button(action: onSend) {
+                Group {
+                    if isSending {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(Color(red: 0.02, green: 0.08, blue: 0.13))
+                    } else {
+                        Image(systemName: "arrow.up")
+                            .fontWeight(.black)
+                    }
+                }
+                .frame(width: 34, height: 34)
+                .foregroundStyle(Color(red: 0.02, green: 0.08, blue: 0.13))
+                .background(accent.opacity(canSubmit ? 1 : 0.34), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit)
+            .help("Send to \(project.displayName)")
+            .accessibilityLabel("Send message")
+        }
+        .padding(.top, 2)
+        .cofleetCardSelectionExclusion(in: selectionCoordinateSpace)
+    }
+
+    private var selectionCoordinateSpace: String {
+        "cofleet.progress.card.\(project.hostID.rawValue).\(project.id)"
+    }
+
+    private var accent: Color { CoFleetTheme.violet }
+
+    private var progressState: ProgressState {
+        switch project.state {
+        case .waitingForApproval, .waitingForAnswer: return .attention
+        case .working: return .working
+        case .idle, .replied, .unavailable: break
+        }
+        switch host?.reachability ?? .unknown {
+        case .offline: return .offline
+        case .unknown: return .checking
+        case .degraded: return .offline
+        case .online: break
+        }
+        switch project.state {
+        case .idle, .replied: return .idle
+        case .unavailable: return .offline
+        case .working, .waitingForApproval, .waitingForAnswer: return .idle
+        }
+    }
+
+    private var progressColor: Color {
+        switch progressState {
+        case .working: accent
+        case .attention: CoFleetTheme.danger
+        case .idle: CoFleetTheme.green
+        case .offline: CoFleetTheme.orange
+        case .checking: .gray
+        }
+    }
+
+    private var activityLabel: String? {
+        if let activity {
+            switch activity {
+            case .idle: return nil
+            case .thinking: return "Codex is thinking"
+            case .reasoning: return "Codex is reasoning"
+            case .runningCommand: return "Codex is running a command"
+            case .approval: return "Waiting for your approval"
+            case .question: return "Waiting for your response"
+            case .replied: return "Codex replied"
+            }
+        }
+        switch project.state {
+        case .working: return "Codex is working"
+        case .waitingForApproval: return "Waiting for your approval"
+        case .waitingForAnswer: return "Waiting for your response"
+        case .idle, .replied, .unavailable: return nil
+        }
+    }
+
+    private enum ProgressState: Equatable {
+        case working
+        case attention
+        case idle
+        case offline
+        case checking
+
+        var label: String {
+            switch self {
+            case .working: "WORKING"
+            case .attention: "NEEDS ATTENTION"
+            case .idle: "IDLE"
+            case .offline: "OFFLINE"
+            case .checking: "CHECKING"
+            }
+        }
+
+        var needsAttention: Bool { self == .attention }
+    }
+}
+
+private struct CoFleetCardSelectionExclusionKey: PreferenceKey {
+    static let defaultValue: [CGRect] = []
+
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
+private extension View {
+    func cofleetCardSelectionExclusion(in coordinateSpace: String) -> some View {
+        background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: CoFleetCardSelectionExclusionKey.self,
+                    value: [proxy.frame(in: .named(coordinateSpace))]
+                )
+            }
+        }
+    }
+}
+
+struct CoFleetProgressMessagePreview: View {
+    let item: CoFleetTurnItem
+    var agentName = "Codex"
+    var accent = CoFleetTheme.violet
+    var compact = false
+
+    private var isUser: Bool { item.kind == .userMessage }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if isUser { Spacer(minLength: compact ? 10 : 22) }
+
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(isUser ? "YOU" : agentName.uppercased())
+                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                        .tracking(0.7)
+                        .foregroundStyle(isUser ? accent : .secondary)
+                    Text(item.createdAt, style: .time)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+                Text(previewText)
+                    .font(.system(size: compact ? 11.5 : 12.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(.primary.opacity(0.9))
+                    .multilineTextAlignment(isUser ? .trailing : .leading)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+            }
+            .padding(.horizontal, compact ? 8 : 10)
+            .padding(.vertical, compact ? 6 : 7)
+            .background(
+                isUser ? accent.opacity(0.12) : Color.white.opacity(0.055),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isUser ? accent.opacity(0.18) : Color.white.opacity(0.07))
+            }
+
+            if !isUser { Spacer(minLength: compact ? 10 : 22) }
+        }
+    }
+
+    private var previewText: String {
+        item.text
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+}
+
+private struct CoFleetProgressCodexMark: View {
+    var body: some View {
+        GeometryReader { geometry in
+            let side = min(geometry.size.width, geometry.size.height)
+            CodexKnotShape()
+                .stroke(
+                    .foreground,
+                    style: StrokeStyle(
+                        lineWidth: max(0.7, side * 0.13),
+                        lineCap: .round,
+                        lineJoin: .round
+                    )
+                )
+                .frame(width: side, height: side)
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .accessibilityHidden(true)
+    }
+
+    private struct CodexKnotShape: Shape {
+        func path(in rect: CGRect) -> Path {
+            var path = Path()
+            let center = CGPoint(x: rect.midX, y: rect.midY)
+            let radius = min(rect.width, rect.height)
+
+            func point(radius normalizedRadius: CGFloat, angle: CGFloat) -> CGPoint {
+                CGPoint(
+                    x: center.x + cos(angle) * radius * normalizedRadius,
+                    y: center.y + sin(angle) * radius * normalizedRadius
+                )
+            }
+
+            for index in 0..<6 {
+                let angle = CGFloat(index) * .pi / 3 - .pi / 2
+                path.move(to: point(radius: 0.14, angle: angle - .pi / 7))
+                path.addCurve(
+                    to: point(radius: 0.25, angle: angle + .pi / 3),
+                    control1: point(radius: 0.38, angle: angle - .pi / 12),
+                    control2: point(radius: 0.43, angle: angle + .pi / 5)
+                )
+            }
+            return path
         }
     }
 }

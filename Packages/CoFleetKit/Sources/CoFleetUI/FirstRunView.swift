@@ -83,7 +83,7 @@ struct CoFleetFirstRunView: View {
                 VStack(spacing: 8) {
                     Text("Your fleet is ready")
                         .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                    Text("Open Progress to see the project, start a Codex task, manage notes and todos, or add another project now.")
+                    Text("Open Progress to see each project's freshest Codex task. Notes, todos, and full conversations stay in Agent Bay.")
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                 }
@@ -132,7 +132,7 @@ struct CoFleetFirstRunView: View {
             }
 
             HStack(spacing: 8) {
-                Image(systemName: step == 2 ? "folder.fill" : "shippingbox.fill")
+                Image(systemName: step == 2 ? "folder.fill" : (step == 3 ? "pawprint.fill" : "shippingbox.fill"))
                     .foregroundStyle(CoFleetTheme.cyan)
                 Text(title)
                     .font(.system(.headline, design: .rounded, weight: .bold))

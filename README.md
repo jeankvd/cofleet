@@ -16,6 +16,8 @@ the source of truth for agent work.
 - Progress, Dashboard, Agent Bay, Active, and Battle destinations.
 - Canonical Codex task history, streamed turns, approvals, questions, models,
   reasoning controls, and permission profiles.
+- Codex Companion handoff: select a project on Mac or iPhone and ask its owning
+  Mac to open the exact canonical thread in Codex Desktop.
 - Direct pairing with one or more private hosts through Tailscale Serve.
 - Host-owned rich notes, structured todos, and source-control status.
 - Local import of user-owned Codex-compatible pets. CoFleet ships no pet art.
@@ -55,9 +57,11 @@ a compile-time dependency.
 
 Codex remains authoritative for task identifiers and transcripts on each
 paired host. CoFleet can open a local task with its supported
-`codex://threads/<id>` link. Remote-host tasks stay inside CoFleet because the
-Codex desktop link does not carry a supported host identifier. The public app
-does not ship keyboard automation or Accessibility-driven navigation.
+`codex://threads/<id>` link. For a task owned by another paired Mac, CoFleet can
+send an authenticated companion request to that host, which opens the same
+local deep link beside its own Codex installation. This makes the handoff work
+from iPhone without inventing an unsupported host-aware Codex URL. The public
+app does not ship keyboard automation or Accessibility-driven navigation.
 
 ## Bootstrap
 
@@ -179,6 +183,33 @@ fixed status labels only.
 Neither script proves signed iPhone relay, Apple Watch notification/haptic
 delivery, or physical complication behavior; those remain explicit device
 tests after signing and installation are configured.
+
+## Built with Codex and GPT-5.6
+
+Codex was the primary development environment for CoFleet. GPT-5.6 was used
+throughout architecture, implementation, review, testing, visual verification,
+and live end-to-end smoke testing.
+
+In particular, Codex and GPT-5.6 helped:
+
+- extract the public Codex-only architecture from an earlier private prototype;
+- implement Swift 6 clients, the Python host, REST/SSE transport, SceneKit,
+  Watch, widgets, and session routing;
+- write and strengthen concurrency, paging, interaction, transport, and
+  host-service tests;
+- compare real simulator captures and correct visible regressions; and
+- verify a live GPT-5.6-Sol turn through CoFleet, including tool activity,
+  command approval, and the final response.
+
+CoFleet uses the official Codex app-server and the user's existing ChatGPT
+sign-in. It does not require an OpenAI API key and never reads or copies
+`~/.codex/auth.json`.
+
+CoFleet is designed to work beside Codex rather than replace it. Progress keeps
+project goals, current state, and recent conversation context visible across
+Apple devices. Codex Companion mode can then hand a selected project back to
+the exact Codex Desktop thread on the Mac that owns it—even when the action
+begins on iPhone.
 
 ## Repository map
 

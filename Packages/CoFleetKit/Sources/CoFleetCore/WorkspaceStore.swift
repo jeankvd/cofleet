@@ -10,6 +10,10 @@ public final class WorkspaceStore {
     public private(set) var discoveredPets: [CoFleetDiscoveredPet] = []
     public private(set) var selectedPetID: String?
     public private(set) var selectedPetAsset: CoFleetPetAsset?
+    public private(set) var battlePetManifestsByProjectID: [String: CoFleetPetManifest] = [:]
+    public private(set) var battlePetAssetsByProjectID: [String: CoFleetPetAsset] = [:]
+    public private(set) var battleTodosByProjectID: [String: [CoFleetTodoItem]] = [:]
+    public private(set) var battleTodoLoadingProjectIDs: Set<String> = []
     public private(set) var isLoadingPetAsset = false
     public private(set) var noteConflict: CoFleetNoteSaveResult?
     public private(set) var isHostOnline = true
@@ -27,6 +31,10 @@ public final class WorkspaceStore {
     @ObservationIgnored private var activeDraftRecord: CoFleetNoteDraftRecord?
     @ObservationIgnored private var isApplyingNoteDraft = false
     @ObservationIgnored private var openGeneration = UUID()
+    @ObservationIgnored private var selectedPetAssetGeneration = UUID()
+    @ObservationIgnored private var battlePetGeneration = UUID()
+    @ObservationIgnored private var battleTodoGeneration = UUID()
+    @ObservationIgnored private var petCatalogByHostID: [CoFleetHostID: [CoFleetPetManifest]] = [:]
 
     public init(
         repository: any CoFleetWorkspaceRepository,
@@ -40,6 +48,9 @@ public final class WorkspaceStore {
         if let note { return noteDraft != note.markdown }
         return activeDraftRecord != nil || !noteDraft.isEmpty
     }
+    public var loadedHostID: CoFleetHostID? { hostID }
+    public var loadedProjectID: String? { projectID }
+    public var loadedSessionID: String? { sessionID }
     public var canMutateTodos: Bool { isHostOnline }
 
     public func open(
@@ -56,6 +67,8 @@ public final class WorkspaceStore {
         self.sessionID = sessionID
         self.isHostOnline = isHostOnline
         self.selectedPetID = selectedPetID
+        selectedPetAssetGeneration = UUID()
+        isLoadingPetAsset = false
         note = nil
         noteConflict = nil
         todos = []
@@ -92,6 +105,7 @@ public final class WorkspaceStore {
             let loadedPets = try await pets
             guard openGeneration == generation else { return }
             self.pets = loadedPets
+            petCatalogByHostID[hostID] = loadedPets
             errorMessage = nil
             await loadSelectedPetAsset()
         } catch {
@@ -164,6 +178,9 @@ public final class WorkspaceStore {
         var updated = todos[index]
         updated.isCompleted.toggle()
         todos[index] = try await repository.saveTodo(updated, expectedETag: updated.eTag)
+        if let projectID, battleTodosByProjectID[projectID] != nil {
+            battleTodosByProjectID[projectID] = todos
+        }
     }
 
     @discardableResult
@@ -183,6 +200,9 @@ public final class WorkspaceStore {
         let saved = try await repository.saveTodo(todo, expectedETag: nil)
         todos.append(saved)
         todos.sort { $0.sortIndex < $1.sortIndex }
+        if battleTodosByProjectID[projectID] != nil {
+            battleTodosByProjectID[projectID] = todos
+        }
         todoDraft = ""
         return saved
     }
@@ -194,11 +214,15 @@ public final class WorkspaceStore {
         guard let todo = todos.first(where: { $0.id == id }) else { return }
         try await repository.deleteTodo(hostID: todo.hostID, id: todo.id, expectedETag: todo.eTag)
         todos.removeAll { $0.id == id }
+        if let projectID, battleTodosByProjectID[projectID] != nil {
+            battleTodosByProjectID[projectID] = todos
+        }
     }
 
     public func refreshPets() async throws {
         guard let hostID else { return }
         pets = try await repository.fetchPets(hostID: hostID)
+        petCatalogByHostID[hostID] = pets
         await loadSelectedPetAsset()
     }
 
@@ -222,6 +246,7 @@ public final class WorkspaceStore {
             pets.append(imported)
             pets.sort { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
         }
+        petCatalogByHostID[hostID] = pets
         discoveredPets.removeAll { $0.digest == imported.digest }
         return imported
     }
@@ -240,6 +265,7 @@ public final class WorkspaceStore {
         )
         selectedPetID = petID
         selectedPetAsset = nil
+        selectedPetAssetGeneration = UUID()
         await loadSelectedPetAsset()
         return updated
     }
@@ -247,21 +273,197 @@ public final class WorkspaceStore {
     public func loadSelectedPetAsset() async {
         guard let hostID, let selectedPetID,
               let manifest = pets.first(where: { $0.id == selectedPetID }) else {
+            selectedPetAssetGeneration = UUID()
             selectedPetAsset = nil
             return
         }
         if selectedPetAsset?.petID == selectedPetID,
            selectedPetAsset?.hostID == hostID { return }
+        let generation = UUID()
+        selectedPetAssetGeneration = generation
         isLoadingPetAsset = true
-        defer { isLoadingPetAsset = false }
         do {
-            selectedPetAsset = try await repository.fetchPetAsset(
+            let loadedAsset = try await repository.fetchPetAsset(
                 hostID: hostID,
                 petID: selectedPetID,
                 assetName: manifest.spritesheetPath
             )
+            guard selectedPetAssetGeneration == generation,
+                  self.hostID == hostID,
+                  self.selectedPetID == selectedPetID else { return }
+            selectedPetAsset = loadedAsset
+            isLoadingPetAsset = false
         } catch {
+            guard selectedPetAssetGeneration == generation,
+                  self.hostID == hostID,
+                  self.selectedPetID == selectedPetID else { return }
             selectedPetAsset = nil
+            errorMessage = error.localizedDescription
+            isLoadingPetAsset = false
+        }
+    }
+
+    /// Load only explicitly selected pet packages for visible project cards. Assets are
+    /// retained by project identity, so routine session refreshes do not refetch them.
+    public func loadBattlePets(for projects: [CoFleetProject]) async {
+        let generation = UUID()
+        battlePetGeneration = generation
+        let visibleCandidates = Array(projects.filter { $0.selectedPetID != nil }.prefix(12))
+        let candidates = visibleCandidates.filter { project in
+            guard let petID = project.selectedPetID else { return false }
+            return battlePetManifestsByProjectID[project.id]?.id != petID
+                || battlePetAssetsByProjectID[project.id]?.petID != petID
+        }
+        let candidateIDs = Set(visibleCandidates.map(\.id))
+        battlePetManifestsByProjectID = battlePetManifestsByProjectID.filter {
+            candidateIDs.contains($0.key)
+        }
+        battlePetAssetsByProjectID = battlePetAssetsByProjectID.filter {
+            candidateIDs.contains($0.key)
+        }
+
+        let repository = self.repository
+        var catalogs = petCatalogByHostID
+        let uncachedHostIDs = Set(candidates.map(\.hostID)).filter { catalogs[$0] == nil }
+        await withTaskGroup(of: HostPetCatalogLoadResult.self) { group in
+            for hostID in uncachedHostIDs {
+                group.addTask {
+                    do {
+                        return .loaded(
+                            hostID: hostID,
+                            manifests: try await repository.fetchPets(hostID: hostID)
+                        )
+                    } catch {
+                        return .failed(hostID: hostID)
+                    }
+                }
+            }
+            for await result in group {
+                guard battlePetGeneration == generation else { return }
+                switch result {
+                case let .loaded(hostID, manifests):
+                    catalogs[hostID] = manifests
+                    petCatalogByHostID[hostID] = manifests
+                case let .failed(hostID):
+                    catalogs[hostID] = []
+                }
+            }
+        }
+        guard battlePetGeneration == generation else { return }
+        var resolvedProjectPets: [(projectID: String, manifest: CoFleetPetManifest)] = []
+        for project in candidates {
+            guard let petID = project.selectedPetID,
+                  let manifest = catalogs[project.hostID]?.first(where: { $0.id == petID }) else {
+                battlePetManifestsByProjectID[project.id] = nil
+                battlePetAssetsByProjectID[project.id] = nil
+                continue
+            }
+            resolvedProjectPets.append((project.id, manifest))
+        }
+
+        let assetKeys = Set(resolvedProjectPets.map { PetAssetLoadKey(manifest: $0.manifest) })
+        var assetsByKey: [PetAssetLoadKey: CoFleetPetAsset] = [:]
+        await withTaskGroup(of: PetAssetLoadResult.self) { group in
+            for key in assetKeys {
+                group.addTask {
+                    do {
+                        return .loaded(
+                            key: key,
+                            asset: try await repository.fetchPetAsset(
+                                hostID: key.hostID,
+                                petID: key.petID,
+                                assetName: key.assetName
+                            )
+                        )
+                    } catch {
+                        return .failed(key: key)
+                    }
+                }
+            }
+
+            for await result in group {
+                guard battlePetGeneration == generation else { return }
+                if case let .loaded(key, asset) = result {
+                    assetsByKey[key] = asset
+                }
+            }
+        }
+        guard battlePetGeneration == generation else { return }
+        for resolved in resolvedProjectPets {
+            let key = PetAssetLoadKey(manifest: resolved.manifest)
+            battlePetManifestsByProjectID[resolved.projectID] = resolved.manifest
+            battlePetAssetsByProjectID[resolved.projectID] = assetsByKey[key]
+        }
+    }
+
+    /// Refreshes Battle objectives only when the Battle destination is opened or its
+    /// visible project set changes. Keeping this separate from the Progress refresh
+    /// loop avoids turning workspace records into a polling workload.
+    public func loadBattleTodos(for projects: [CoFleetProject]) async {
+        let generation = UUID()
+        battleTodoGeneration = generation
+        let candidates = Array(projects.prefix(12))
+        let candidateIDs = Set(candidates.map(\.id))
+        battleTodosByProjectID = battleTodosByProjectID.filter { candidateIDs.contains($0.key) }
+        battleTodoLoadingProjectIDs = candidateIDs
+
+        let repository = self.repository
+        await withTaskGroup(of: BattleTodoLoadResult.self) { group in
+            for project in candidates {
+                group.addTask {
+                    do {
+                        let todos = try await repository.fetchTodos(
+                            hostID: project.hostID,
+                            projectID: project.id
+                        )
+                        return .loaded(projectID: project.id, todos: todos)
+                    } catch {
+                        return .failed(projectID: project.id)
+                    }
+                }
+            }
+
+            for await result in group {
+                guard battleTodoGeneration == generation else { return }
+                switch result {
+                case let .loaded(projectID, todos):
+                    battleTodosByProjectID[projectID] = todos.sorted {
+                        $0.sortIndex == $1.sortIndex
+                            ? $0.updatedAt < $1.updatedAt
+                            : $0.sortIndex < $1.sortIndex
+                    }
+                case let .failed(projectID):
+                    // Preserve a previously loaded objective list through a transient
+                    // reconnect instead of replacing it with demo data.
+                    if battleTodosByProjectID[projectID] == nil {
+                        battleTodosByProjectID[projectID] = []
+                    }
+                }
+                battleTodoLoadingProjectIDs.remove(result.projectID)
+            }
+        }
+        guard battleTodoGeneration == generation else { return }
+        battleTodoLoadingProjectIDs.removeAll()
+    }
+
+    /// Resolves a Battle checklist action against the same host-authoritative todo
+    /// record used by the workspace editor, then reconciles both in-memory views.
+    public func toggleBattleTodo(projectID: String, todoID: String) async {
+        guard var projectTodos = battleTodosByProjectID[projectID],
+              let index = projectTodos.firstIndex(where: { $0.id == todoID }) else { return }
+        var updated = projectTodos[index]
+        updated.isCompleted.toggle()
+
+        do {
+            let saved = try await repository.saveTodo(updated, expectedETag: updated.eTag)
+            projectTodos[index] = saved
+            battleTodosByProjectID[projectID] = projectTodos
+            if self.projectID == projectID,
+               let workspaceIndex = todos.firstIndex(where: { $0.id == todoID }) {
+                todos[workspaceIndex] = saved
+            }
+            errorMessage = nil
+        } catch {
             errorMessage = error.localizedDescription
         }
     }
@@ -323,5 +525,40 @@ public final class WorkspaceStore {
         }
         activeDraftRecord = nil
         applyNoteDraft(markdown)
+    }
+}
+
+private enum HostPetCatalogLoadResult: Sendable {
+    case loaded(hostID: CoFleetHostID, manifests: [CoFleetPetManifest])
+    case failed(hostID: CoFleetHostID)
+}
+
+private struct PetAssetLoadKey: Hashable, Sendable {
+    var hostID: CoFleetHostID
+    var petID: String
+    var assetName: String
+    var digest: String
+
+    init(manifest: CoFleetPetManifest) {
+        hostID = manifest.hostID
+        petID = manifest.id
+        assetName = manifest.spritesheetPath
+        digest = manifest.digest
+    }
+}
+
+private enum PetAssetLoadResult: Sendable {
+    case loaded(key: PetAssetLoadKey, asset: CoFleetPetAsset)
+    case failed(key: PetAssetLoadKey)
+}
+
+private enum BattleTodoLoadResult: Sendable {
+    case loaded(projectID: String, todos: [CoFleetTodoItem])
+    case failed(projectID: String)
+
+    var projectID: String {
+        switch self {
+        case let .loaded(projectID, _), let .failed(projectID): projectID
+        }
     }
 }

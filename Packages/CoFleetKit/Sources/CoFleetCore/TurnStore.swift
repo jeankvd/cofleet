@@ -10,13 +10,24 @@ public final class TurnStore {
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public private(set) var attachments: [CoFleetTurnAttachment] = []
-    public var draft = ""
+    public var draft = "" {
+        didSet { persistCurrentComposer() }
+    }
 
     @ObservationIgnored private let repository: any CoFleetTurnRepository
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var hostID: CoFleetHostID?
     @ObservationIgnored private var projectID: String?
     @ObservationIgnored private var sessionID: String?
+    @ObservationIgnored private var openGeneration = UUID()
+    @ObservationIgnored private var resetGeneration = UUID()
+    @ObservationIgnored private var sendGenerationsByRoute: [TurnRoute: UUID] = [:]
+    @ObservationIgnored private var composersByRoute: [TurnRoute: ComposerState] = [:]
+    @ObservationIgnored private var composerAccessOrder: [TurnRoute: UInt64] = [:]
+    @ObservationIgnored private var composerAccessCounter: UInt64 = 0
+    @ObservationIgnored private var isRestoringComposer = false
+    @ObservationIgnored private var itemRevision: UInt64 = 0
+    @ObservationIgnored private var interactionRevision: UInt64 = 0
     public private(set) var lastProcessedEventID: String?
 
     public init(repository: any CoFleetTurnRepository) {
@@ -28,67 +39,151 @@ public final class TurnStore {
     }
 
     public func open(hostID: CoFleetHostID, projectID: String, sessionID: String) async {
+        persistCurrentComposer()
+        let route = TurnRoute(hostID: hostID, projectID: projectID, sessionID: sessionID)
+        let generation = UUID()
+        openGeneration = generation
+        resetGeneration = UUID()
         eventTask?.cancel()
         self.hostID = hostID
         self.projectID = projectID
         self.sessionID = sessionID
-        attachments = []
+        items = []
+        itemRevision = 0
+        interactions = []
+        interactionRevision = 0
+        activeTurn = nil
+        restoreComposer(for: route)
         lastProcessedEventID = nil
         isLoading = true
-        do {
-            async let transcript = repository.fetchTranscript(hostID: hostID, sessionID: sessionID)
-            async let pending = repository.fetchInteractions(hostID: hostID, sessionID: sessionID)
-            items = try await transcript
-            interactions = try await pending
-            errorMessage = nil
-            startEvents(hostID: hostID, sessionID: sessionID)
-        } catch {
-            errorMessage = error.localizedDescription
+
+        let repository = repository
+        async let transcriptResult = Self.capture {
+            try await repository.fetchTranscript(hostID: hostID, sessionID: sessionID)
         }
+        async let interactionResult = Self.capture {
+            try await repository.fetchInteractions(hostID: hostID, sessionID: sessionID)
+        }
+
+        var errors: [String] = []
+        switch await transcriptResult {
+        case let .success(loadedItems):
+            guard isCurrent(route: route, generation: generation) else { return }
+            items = loadedItems
+            itemRevision &+= 1
+        case let .failure(message):
+            guard isCurrent(route: route, generation: generation) else { return }
+            errors.append("Couldn’t load this conversation: \(message)")
+        }
+
+        guard isCurrent(route: route, generation: generation) else { return }
+        startEvents(hostID: hostID, sessionID: sessionID, generation: generation)
+
+        let interactionRevisionAtRequest = interactionRevision
+        switch await interactionResult {
+        case let .success(loadedInteractions):
+            guard isCurrent(route: route, generation: generation) else { return }
+            if interactionRevision == interactionRevisionAtRequest {
+                interactions = loadedInteractions
+            }
+        case let .failure(message):
+            guard isCurrent(route: route, generation: generation) else { return }
+            errors.append("Pending interactions couldn’t be refreshed: \(message)")
+        }
+
+        guard isCurrent(route: route, generation: generation) else { return }
+        errorMessage = errors.isEmpty ? nil : errors.joined(separator: "\n")
         isLoading = false
     }
 
+    public func close() {
+        persistCurrentComposer()
+        openGeneration = UUID()
+        resetGeneration = UUID()
+        eventTask?.cancel()
+        eventTask = nil
+        hostID = nil
+        projectID = nil
+        sessionID = nil
+        items = []
+        itemRevision = 0
+        interactions = []
+        interactionRevision = 0
+        activeTurn = nil
+        clearVisibleComposer()
+        lastProcessedEventID = nil
+        isLoading = false
+        errorMessage = nil
+    }
+
+    public var loadedHostID: CoFleetHostID? { hostID }
+    public var loadedProjectID: String? { projectID }
+    public var loadedSessionID: String? { sessionID }
+
     @discardableResult
     public func send(settings: CoFleetSessionSettings) async throws -> CoFleetTurn {
-        guard let hostID, let projectID, let sessionID else {
+        guard let route = loadedRoute else {
             throw CoFleetClientError.unavailable("Select a session before sending a message.")
         }
+        let generation = openGeneration
         let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let sentAttachments = attachments
         guard !prompt.isEmpty || !sentAttachments.isEmpty else {
             throw CoFleetClientError.conflict("Enter a message or attach an image first.")
         }
+        let sendGeneration = UUID()
+        sendGenerationsByRoute[route] = sendGeneration
         let optimistic = prompt.isEmpty ? nil : CoFleetTurnItem(
             id: "local-\(UUID().uuidString)",
             turnID: "pending",
             kind: .userMessage,
             text: prompt
         )
-        if let optimistic { items.append(optimistic) }
+        if let optimistic {
+            items.append(optimistic)
+            itemRevision &+= 1
+        }
         draft = ""
         attachments = []
+        persistCurrentComposer()
         var input: [CoFleetTurnInput] = []
         if !prompt.isEmpty { input.append(.text(prompt)) }
         input.append(contentsOf: sentAttachments.map(\.source.input))
         do {
             let turn = try await repository.startTurn(
-                hostID: hostID,
-                projectID: projectID,
-                sessionID: sessionID,
+                hostID: route.hostID,
+                projectID: route.projectID,
+                sessionID: route.sessionID,
                 input: input,
                 settings: settings,
                 idempotencyKey: UUID()
             )
-            activeTurn = turn
+            if sendGenerationsByRoute[route] == sendGeneration {
+                if isCurrent(route: route, generation: generation) {
+                    activeTurn = turn
+                }
+                sendGenerationsByRoute[route] = nil
+            }
             return turn
         } catch {
-            if let optimistic { items.removeAll { $0.id == optimistic.id } }
-            if draft.isEmpty { draft = prompt }
-            let queuedSources = Set(attachments.map(\.source))
-            let availableSlots = max(0, CoFleetTurnAttachment.maximumCount - attachments.count)
-            attachments.append(contentsOf: sentAttachments
-                .filter { !queuedSources.contains($0.source) }
-                .prefix(availableSlots))
+            if sendGenerationsByRoute[route] == sendGeneration {
+                if isCurrent(route: route, generation: generation) {
+                    if let optimistic {
+                        items.removeAll { $0.id == optimistic.id }
+                        itemRevision &+= 1
+                    }
+                    if draft.isEmpty { draft = prompt }
+                    restoreAttachments(sentAttachments)
+                    persistCurrentComposer()
+                } else {
+                    restoreCachedComposer(
+                        prompt: prompt,
+                        attachments: sentAttachments,
+                        for: route
+                    )
+                }
+                sendGenerationsByRoute[route] = nil
+            }
             throw error
         }
     }
@@ -108,10 +203,12 @@ public final class TurnStore {
             throw CoFleetTurnAttachmentError.duplicateAttachment
         }
         attachments.append(attachment)
+        persistCurrentComposer()
     }
 
     public func removeAttachment(id: CoFleetTurnAttachment.ID) {
         attachments.removeAll { $0.id == id }
+        persistCurrentComposer()
     }
 
     public func interrupt() async throws {
@@ -124,17 +221,20 @@ public final class TurnStore {
         decision: CoFleetInteractionDecision,
         answers: [String: [String]]? = nil
     ) async throws {
-        guard let hostID else { return }
+        guard let route = loadedRoute else { return }
+        let generation = openGeneration
         try await repository.resolveInteraction(
-            hostID: hostID,
+            hostID: route.hostID,
             interactionID: interactionID,
             decision: decision,
             answers: answers
         )
+        guard isCurrent(route: route, generation: generation) else { return }
         interactions.removeAll { $0.id == interactionID }
+        interactionRevision &+= 1
     }
 
-    private func startEvents(hostID: CoFleetHostID, sessionID: String) {
+    private func startEvents(hostID: CoFleetHostID, sessionID: String, generation: UUID) {
         eventTask = Task { [weak self, repository] in
             var delayNanoseconds: UInt64 = 500_000_000
             while !Task.isCancelled {
@@ -146,14 +246,16 @@ public final class TurnStore {
                         afterEventID: afterEventID
                     )
                     for try await sequenced in stream {
-                        guard !Task.isCancelled else { return }
+                        guard !Task.isCancelled, self?.openGeneration == generation else { return }
                         self?.consume(sequenced)
                         delayNanoseconds = 500_000_000
                     }
                 } catch is CancellationError {
                     return
                 } catch {
-                    self?.errorMessage = error.localizedDescription
+                    if self?.openGeneration == generation {
+                        self?.errorMessage = error.localizedDescription
+                    }
                 }
                 let jitter = Double.random(in: 0.8...1.2)
                 let sleep = UInt64(Double(delayNanoseconds) * jitter)
@@ -176,9 +278,8 @@ public final class TurnStore {
                 : turn
         case let .upsertItem(item):
             if item.kind == .userMessage {
-                // Replace the local bubble with the canonical Codex item once
-                // its lifecycle event arrives. Snapshot upserts also make SSE
-                // replay idempotent after reconnects.
+                // Replace the local bubble with the canonical item once its lifecycle event
+                // arrives. Snapshot upserts also make replay idempotent after reconnects.
                 if let optimistic = items.firstIndex(where: {
                     $0.id.hasPrefix("local-") && $0.kind == .userMessage && $0.text == item.text
                 }) {
@@ -190,26 +291,174 @@ public final class TurnStore {
             } else {
                 items.append(item)
             }
+            itemRevision &+= 1
         case let .interaction(interaction):
             if let index = interactions.firstIndex(where: { $0.id == interaction.id }) {
                 interactions[index] = interaction
             } else {
                 interactions.append(interaction)
             }
+            interactionRevision &+= 1
         case let .interactionResolved(id):
             interactions.removeAll { $0.id == id }
+            interactionRevision &+= 1
         case let .interactionExpired(id):
             interactions.removeAll { $0.id == id }
+            interactionRevision &+= 1
         case .resetRequired:
-            Task { [weak self] in
-                guard let self, let hostID = self.hostID, let sessionID = self.sessionID else { return }
-                async let transcript = self.repository.fetchTranscript(hostID: hostID, sessionID: sessionID)
-                async let pending = self.repository.fetchInteractions(hostID: hostID, sessionID: sessionID)
-                self.items = try await transcript
-                self.interactions = try await pending
-            }
+            refreshAfterReset()
         case .checkpoint:
             break
         }
     }
+
+    private var loadedRoute: TurnRoute? {
+        guard let hostID, let projectID, let sessionID else { return nil }
+        return TurnRoute(hostID: hostID, projectID: projectID, sessionID: sessionID)
+    }
+
+    private func isCurrent(route: TurnRoute, generation: UUID) -> Bool {
+        loadedRoute == route && openGeneration == generation
+    }
+
+    private func refreshAfterReset() {
+        guard let route = loadedRoute else { return }
+        let generation = openGeneration
+        let reset = UUID()
+        resetGeneration = reset
+        let itemRevisionAtRequest = itemRevision
+        let interactionRevisionAtRequest = interactionRevision
+
+        Task { [weak self, repository] in
+            async let transcriptResult = Self.capture {
+                try await repository.fetchTranscript(hostID: route.hostID, sessionID: route.sessionID)
+            }
+            async let interactionResult = Self.capture {
+                try await repository.fetchInteractions(hostID: route.hostID, sessionID: route.sessionID)
+            }
+
+            let transcript = await transcriptResult
+            guard let self,
+                  self.isCurrent(route: route, generation: generation),
+                  self.resetGeneration == reset else { return }
+            switch transcript {
+            case let .success(items):
+                if self.itemRevision == itemRevisionAtRequest {
+                    self.items = items
+                    self.itemRevision &+= 1
+                    self.errorMessage = nil
+                }
+            case let .failure(message):
+                self.errorMessage = "Couldn’t refresh this conversation: \(message)"
+            }
+
+            let pending = await interactionResult
+            guard self.isCurrent(route: route, generation: generation),
+                  self.resetGeneration == reset else { return }
+            switch pending {
+            case let .success(interactions):
+                if self.interactionRevision == interactionRevisionAtRequest {
+                    self.interactions = interactions
+                    self.interactionRevision &+= 1
+                }
+            case let .failure(message):
+                self.errorMessage = "Pending interactions couldn’t be refreshed: \(message)"
+            }
+        }
+    }
+
+    private func persistCurrentComposer() {
+        guard !isRestoringComposer, let route = loadedRoute else { return }
+        if draft.isEmpty && attachments.isEmpty {
+            composersByRoute[route] = nil
+            composerAccessOrder[route] = nil
+            return
+        }
+        composersByRoute[route] = ComposerState(draft: draft, attachments: attachments)
+        composerAccessCounter &+= 1
+        composerAccessOrder[route] = composerAccessCounter
+        trimComposerCache(keeping: route)
+    }
+
+    private func restoreComposer(for route: TurnRoute) {
+        let composer = composersByRoute[route] ?? ComposerState()
+        isRestoringComposer = true
+        draft = composer.draft
+        attachments = composer.attachments
+        isRestoringComposer = false
+        if !composer.draft.isEmpty || !composer.attachments.isEmpty {
+            composerAccessCounter &+= 1
+            composerAccessOrder[route] = composerAccessCounter
+        }
+    }
+
+    private func clearVisibleComposer() {
+        isRestoringComposer = true
+        draft = ""
+        attachments = []
+        isRestoringComposer = false
+    }
+
+    private func restoreAttachments(_ sentAttachments: [CoFleetTurnAttachment]) {
+        let queuedSources = Set(attachments.map(\.source))
+        let availableSlots = max(0, CoFleetTurnAttachment.maximumCount - attachments.count)
+        attachments.append(contentsOf: sentAttachments
+            .filter { !queuedSources.contains($0.source) }
+            .prefix(availableSlots))
+    }
+
+    private func restoreCachedComposer(
+        prompt: String,
+        attachments sentAttachments: [CoFleetTurnAttachment],
+        for route: TurnRoute
+    ) {
+        var composer = composersByRoute[route] ?? ComposerState()
+        if composer.draft.isEmpty { composer.draft = prompt }
+        let queuedSources = Set(composer.attachments.map(\.source))
+        let availableSlots = max(0, CoFleetTurnAttachment.maximumCount - composer.attachments.count)
+        composer.attachments.append(contentsOf: sentAttachments
+            .filter { !queuedSources.contains($0.source) }
+            .prefix(availableSlots))
+        guard !composer.draft.isEmpty || !composer.attachments.isEmpty else { return }
+        composersByRoute[route] = composer
+        composerAccessCounter &+= 1
+        composerAccessOrder[route] = composerAccessCounter
+        trimComposerCache(keeping: route)
+    }
+
+    private func trimComposerCache(keeping currentRoute: TurnRoute) {
+        while composersByRoute.count > 64 {
+            guard let oldest = composerAccessOrder
+                .filter({ $0.key != currentRoute })
+                .min(by: { $0.value < $1.value })?.key else { return }
+            composersByRoute[oldest] = nil
+            composerAccessOrder[oldest] = nil
+        }
+    }
+
+    private nonisolated static func capture<Value: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> Value
+    ) async -> StoreLoadResult<Value> {
+        do {
+            return .success(try await operation())
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+}
+
+private struct TurnRoute: Hashable, Sendable {
+    var hostID: CoFleetHostID
+    var projectID: String
+    var sessionID: String
+}
+
+private struct ComposerState: Sendable {
+    var draft = ""
+    var attachments: [CoFleetTurnAttachment] = []
+}
+
+private enum StoreLoadResult<Value: Sendable>: Sendable {
+    case success(Value)
+    case failure(String)
 }

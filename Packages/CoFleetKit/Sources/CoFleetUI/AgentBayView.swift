@@ -5,20 +5,42 @@ import UniformTypeIdentifiers
 #if !os(watchOS)
 
 public struct CoFleetAgentBayView: View {
+    private static let initialMessagePageSize = 40
+    private static let additionalMessagePageSize = 40
+    private static let latestButtonDistance: CGFloat = 48
+    private static let nearBottomDistance: CGFloat = 18
+
     @Bindable private var threadStore: ThreadStore
     @Bindable private var turnStore: TurnStore
     @Binding private var settings: CoFleetSessionSettings
     private let models: [CoFleetModelInfo]
     private let fleetStore: FleetStore?
+    private let workspaceStore: WorkspaceStore?
     private let localHostID: CoFleetHostID?
+    private let onHatchPet: (@MainActor (CoFleetProject) async throws -> Void)?
 
     @State private var showsSessions = false
     @State private var showsAddProject = false
+    @State private var showsPetLibrary = false
+    @State private var showsWorkspace = false
     @State private var showsRuntime = false
     @State private var showsImageURLPrompt = false
     @State private var showsLocalImagePicker = false
     @State private var imageURLDraft = ""
     @State private var composerErrorMessage: String?
+    @State private var isPreparingSend = false
+    @FocusState private var composerIsFocused: Bool
+    @State private var messageLimitBySession: [String: Int] = [:]
+    @State private var pendingHistoryAnchor: String?
+    @State private var followsLatestMessage = true
+    @State private var userIsDraggingConversation = false
+    @State private var distanceFromConversationBottom: CGFloat = 0
+    @State private var followScrollScheduled = false
+    @State private var programmaticScrollGeneration = 0
+    @AppStorage(CoFleetConversationPresentationSettings.rendersMarkdownKey)
+    private var rendersMarkdown = CoFleetConversationPresentationSettings.rendersMarkdownDefault
+    @AppStorage(CoFleetConversationPresentationSettings.tracePresentationKey)
+    private var tracePresentationRawValue = CoFleetConversationPresentationSettings.tracePresentationDefault.rawValue
 
     public init(
         threadStore: ThreadStore,
@@ -26,52 +48,36 @@ public struct CoFleetAgentBayView: View {
         settings: Binding<CoFleetSessionSettings>,
         models: [CoFleetModelInfo],
         fleetStore: FleetStore? = nil,
-        localHostID: CoFleetHostID? = nil
+        workspaceStore: WorkspaceStore? = nil,
+        localHostID: CoFleetHostID? = nil,
+        onHatchPet: (@MainActor (CoFleetProject) async throws -> Void)? = nil
     ) {
         self.threadStore = threadStore
         self.turnStore = turnStore
         _settings = settings
         self.models = models
         self.fleetStore = fleetStore
+        self.workspaceStore = workspaceStore
         self.localHostID = localHostID
+        self.onHatchPet = onHatchPet
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 11) {
-                        ForEach(conversationEntries) { entry in
-                            switch entry.content {
-                            case let .message(item):
-                                CoFleetTurnItemView(item: item)
-                                    .id(entry.id)
-                            case let .activity(items):
-                                CoFleetActivityTimeline(items: items)
-                                    .id(entry.id)
-                            }
-                        }
-                        ForEach(turnStore.interactions) { interaction in
-                            CoFleetInteractionView(interaction: interaction) { decision, answers in
-                                Task { try? await turnStore.resolve(interactionID: interaction.id, decision: decision, answers: answers) }
-                            }
-                        }
-                    }
-                    .padding(14)
-                }
-                .onChange(of: turnStore.items.count) {
-                    if let id = turnStore.items.last?.id { proxy.scrollTo(id, anchor: .bottom) }
-                }
+        ZStack {
+            CoFleetTheme.agentBayBackground.ignoresSafeArea()
+            VStack(spacing: 0) {
+                header
+                Divider().opacity(0.3)
+                conversation
+                composer
             }
-
-            Divider()
-            composer
         }
-        .background(CoFleetTheme.background)
-        .sheet(isPresented: $showsSessions) { CoFleetSessionPicker(store: threadStore) }
+        .sheet(isPresented: $showsSessions) {
+            CoFleetSessionPicker(store: threadStore)
+                #if os(iOS)
+                .presentationDetents([.medium, .large])
+                #endif
+        }
         .sheet(isPresented: $showsRuntime) {
             NavigationStack {
                 CoFleetRuntimeControls(settings: $settings, models: models)
@@ -95,6 +101,24 @@ public struct CoFleetAgentBayView: View {
                 CoFleetProjectRegistrationView(fleetStore: fleetStore)
             }
         }
+        .sheet(isPresented: $showsPetLibrary) {
+            if let fleetStore, let workspaceStore, let project = fleetStore.selectedProject {
+                CoFleetPetLibraryView(
+                    workspaceStore: workspaceStore,
+                    project: project,
+                    onProjectUpdated: fleetStore.applyProjectUpdate,
+                    onHatchWithCodex: hatchAction(for: project)
+                )
+            }
+        }
+        .sheet(isPresented: $showsWorkspace) {
+            if let workspaceStore, let project = selectedProject {
+                CoFleetWorkspaceView(
+                    workspaceStore: workspaceStore,
+                    projectName: project.displayName
+                )
+            }
+        }
         .alert("Add Image URL", isPresented: $showsImageURLPrompt) {
             TextField("https://example.com/image.png", text: $imageURLDraft)
                 .textContentType(.URL)
@@ -111,59 +135,417 @@ public struct CoFleetAgentBayView: View {
             onCompletion: addLocalImages
         )
         #endif
+        .onChange(of: turnStore.loadedSessionID) { _, _ in
+            composerIsFocused = false
+            pendingHistoryAnchor = nil
+            followsLatestMessage = true
+            userIsDraggingConversation = false
+            distanceFromConversationBottom = 0
+        }
     }
 
-    private var header: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(threadStore.selectedSession?.title ?? "Agent Bay")
-                        .font(.system(.headline, design: .rounded, weight: .bold))
-                        .lineLimit(1)
-                    Text(threadStore.selectedSession?.modelID ?? settings.modelID ?? "Host default model")
-                        .font(.caption.monospaced().weight(.semibold))
-                        .foregroundStyle(CoFleetTheme.cyan)
-                }
-                Spacer()
-                Button { showsSessions = true } label: {
-                    Label("History", systemImage: "clock.arrow.circlepath")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Session history")
-                if fleetStore != nil {
-                    Button { showsAddProject = true } label: {
-                        Label("Add Project", systemImage: "folder.badge.plus")
-                            .labelStyle(.iconOnly)
+    private var conversation: some View {
+        let entries = conversationEntries
+        let visibleEntries = entries.suffix(min(currentMessageLimit, entries.count))
+        let earlierCount = max(entries.count - currentMessageLimit, 0)
+        let showsLatestButton = !visibleEntries.isEmpty
+            && distanceFromConversationBottom > Self.latestButtonDistance
+
+        return GeometryReader { viewport in
+            ScrollViewReader { proxy in
+                ZStack(alignment: .bottomTrailing) {
+                    ScrollView {
+                        // Manada intentionally pages a small regular stack. It is more
+                        // stable than a lazy stack while the last Codex item is streaming.
+                        VStack(alignment: .leading, spacing: 11) {
+                            if earlierCount > 0 {
+                                Button {
+                                    loadOlderMessages(entries: entries)
+                                } label: {
+                                    Label(
+                                        "Load earlier messages (\(min(earlierCount, Self.additionalMessagePageSize)))",
+                                        systemImage: "arrow.up.circle"
+                                    )
+                                    .font(.caption.bold())
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(CoFleetTheme.cyan)
+                                .accessibilityIdentifier("cofleet.messages.load-earlier")
+                            }
+
+                            if turnStore.isLoading && entries.isEmpty {
+                                ProgressView("Loading conversation…")
+                                    .frame(maxWidth: .infinity)
+                                    .padding(24)
+                            }
+
+                            ForEach(visibleEntries) { entry in
+                                conversationEntry(entry)
+                                    .id(entry.id)
+                            }
+
+                            if entries.isEmpty && !turnStore.isLoading,
+                               turnStore.loadedSessionID == nil {
+                                ContentUnavailableView(
+                                    "Choose a Codex session",
+                                    systemImage: "bubble.left.and.bubble.right",
+                                    description: Text("Open History to resume a task, or type below to start a new one.")
+                                )
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 28)
+                            }
+
+                            GeometryReader { marker in
+                                Color.clear.preference(
+                                    key: CoFleetConversationBottomPositionPreferenceKey.self,
+                                    value: marker.frame(in: .named(conversationCoordinateSpace)).maxY
+                                )
+                            }
+                            .frame(height: 1)
+                            .id(conversationBottomID)
+                        }
+                        .padding(14)
                     }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Add project")
-                }
-                Button { showsRuntime = true } label: {
-                    Label("Runtime", systemImage: "slider.horizontal.3")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Model, reasoning, speed, and access")
-                if turnStore.activeTurn != nil {
-                    Button(role: .destructive) {
-                        Task { try? await turnStore.interrupt() }
-                    } label: {
-                        Label("Stop", systemImage: "stop.fill")
-                            .labelStyle(.iconOnly)
+                    .coordinateSpace(name: conversationCoordinateSpace)
+                    .scrollDismissesKeyboard(.interactively)
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 4)
+                            .onChanged { value in handleConversationDragChanged(value) }
+                            .onEnded { _ in handleConversationDragEnded() }
+                    )
+                    .coFleetReaderScrollPhaseChanged { isScrolling in
+                        guard isScrolling else {
+                            handleConversationDragEnded()
+                            return
+                        }
+                        if distanceFromConversationBottom > Self.nearBottomDistance {
+                            followsLatestMessage = false
+                        }
                     }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Stop active turn")
+                    .onPreferenceChange(CoFleetConversationBottomPositionPreferenceKey.self) { bottomPosition in
+                        let distance = max(0, bottomPosition - viewport.size.height).rounded()
+                        if abs(distanceFromConversationBottom - distance) >= 1 {
+                            distanceFromConversationBottom = distance
+                        }
+                        if distance <= Self.nearBottomDistance, !userIsDraggingConversation {
+                            followsLatestMessage = true
+                        }
+                    }
+
+                    if showsLatestButton {
+                        Button {
+                            followsLatestMessage = true
+                            userIsDraggingConversation = false
+                            requestFollowScroll(using: proxy, animated: true)
+                        } label: {
+                            Label("Latest", systemImage: "arrow.down")
+                                .font(.caption.bold())
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 9)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .overlay(Capsule().stroke(CoFleetTheme.cyan.opacity(0.3)))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 14)
+                        .padding(.bottom, 12)
+                        .accessibilityIdentifier("cofleet.messages.latest")
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.18), value: showsLatestButton)
+                .onAppear {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo(conversationBottomID, anchor: .bottom)
+                    }
+                }
+                .onChange(of: conversationRevision) { previous, current in
+                    if current.sessionID != previous.sessionID {
+                        pendingHistoryAnchor = nil
+                        followsLatestMessage = true
+                    } else if current.entryCount > previous.entryCount, !followsLatestMessage {
+                        let increase = current.entryCount - previous.entryCount
+                        if let sessionID = current.sessionID {
+                            messageLimitBySession[sessionID] = min(
+                                currentMessageLimit + increase,
+                                current.entryCount
+                            )
+                        }
+                    }
+                    requestFollowScroll(using: proxy, animated: false)
+                }
+                .onChange(of: currentMessageLimit) { _, _ in
+                    guard let anchor = pendingHistoryAnchor else { return }
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo(anchor, anchor: .top)
+                    }
+                    pendingHistoryAnchor = nil
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
+    }
+
+    @ViewBuilder
+    private func conversationEntry(_ entry: CoFleetConversationEntry) -> some View {
+        switch entry.content {
+        case let .message(item):
+            CoFleetTurnItemView(
+                item: item,
+                accent: CoFleetTheme.cyan,
+                rendersMarkdown: rendersMarkdown,
+                isStreaming: item.state == .streaming
+            )
+        case let .activity(items):
+            if tracePresentation != .hidden {
+                HStack {
+                    CoFleetActivityTimeline(
+                        items: items,
+                        preference: tracePresentation,
+                        accent: CoFleetTheme.cyan
+                    )
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 11)
+                    .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 15))
+                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.08)))
+                    Spacer(minLength: 36)
+                }
+                .accessibilityIdentifier("cofleet.activity.bubble")
+            }
+        }
+    }
+
+    private var currentMessageLimit: Int {
+        guard let sessionID = turnStore.loadedSessionID else { return Self.initialMessagePageSize }
+        return max(messageLimitBySession[sessionID] ?? Self.initialMessagePageSize, Self.initialMessagePageSize)
+    }
+
+    private var conversationBottomID: String {
+        "cofleet-conversation-bottom-\(turnStore.loadedSessionID ?? "none")"
+    }
+
+    private var conversationCoordinateSpace: String {
+        "cofleet-conversation-scroll-\(turnStore.loadedSessionID ?? "none")"
+    }
+
+    private var tracePresentation: CoFleetTracePresentationPreference {
+        CoFleetTracePresentationPreference(rawValue: tracePresentationRawValue)
+            ?? CoFleetConversationPresentationSettings.tracePresentationDefault
+    }
+
+    private var conversationRevision: CoFleetConversationRevision {
+        CoFleetConversationRevision(
+            sessionID: turnStore.loadedSessionID,
+            entryCount: conversationEntries.count,
+            lastItemID: turnStore.items.last?.id,
+            lastTextCount: turnStore.items.last?.text.count ?? 0,
+            lastState: turnStore.items.last?.state
+        )
+    }
+
+    private func loadOlderMessages(entries: [CoFleetConversationEntry]) {
+        guard currentMessageLimit < entries.count,
+              let sessionID = turnStore.loadedSessionID else { return }
+        pendingHistoryAnchor = entries.suffix(currentMessageLimit).first?.id
+        followsLatestMessage = false
+        messageLimitBySession[sessionID] = min(
+            currentMessageLimit + Self.additionalMessagePageSize,
+            entries.count
+        )
+    }
+
+    private func requestFollowScroll(using proxy: ScrollViewProxy, animated: Bool) {
+        guard followsLatestMessage, !userIsDraggingConversation, !followScrollScheduled else { return }
+        followScrollScheduled = true
+        DispatchQueue.main.async {
+            followScrollScheduled = false
+            guard followsLatestMessage, !userIsDraggingConversation else { return }
+            programmaticScrollGeneration &+= 1
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(conversationBottomID, anchor: .bottom)
+                }
+            } else {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    proxy.scrollTo(conversationBottomID, anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    private func handleConversationDragChanged(_ value: DragGesture.Value) {
+        guard abs(value.translation.height) >= 4 else { return }
+        userIsDraggingConversation = true
+        if value.translation.height > 0 || distanceFromConversationBottom > Self.nearBottomDistance {
+            followsLatestMessage = false
+        }
+    }
+
+    private func handleConversationDragEnded() {
+        userIsDraggingConversation = false
+        if distanceFromConversationBottom <= Self.nearBottomDistance {
+            followsLatestMessage = true
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 13) {
+            if let fleetStore {
+                Menu {
+                    ForEach(fleetStore.visibleProjects) { project in
+                        Button {
+                            fleetStore.selectedProjectID = project.id
+                        } label: {
+                            Label(
+                                project.displayName,
+                                systemImage: fleetStore.selectedProjectID == project.id
+                                    ? "checkmark.circle.fill"
+                                    : "circle"
+                            )
+                        }
+                    }
+                    Divider()
+                    Button {
+                        showsAddProject = true
+                    } label: {
+                        Label("Add Project", systemImage: "folder.badge.plus")
+                    }
+                } label: {
+                    CoFleetAgentBayAvatar(
+                        name: selectedProject?.displayName ?? "Codex",
+                        manifest: selectedProjectPetManifest,
+                        asset: workspaceStore?.selectedPetAsset,
+                        action: selectedProjectActivity?.actionIndicator
+                            ?? selectedProject?.state.actionIndicator
+                            ?? .idle,
+                        working: turnStore.activeTurn != nil || selectedProjectIsWorking,
+                        size: 62
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .accessibilityLabel("Choose project, current project \(selectedProject?.displayName ?? "none")")
+            } else {
+                CoFleetAgentBayAvatar(
+                    name: "Codex",
+                    manifest: nil,
+                    asset: nil,
+                    action: .idle,
+                    working: turnStore.activeTurn != nil,
+                    size: 62
+                )
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Text((selectedProject?.displayName ?? "Agent Bay").uppercased())
+                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .tracking(1.1)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
+                    Spacer(minLength: 4)
+                    if selectedProject != nil, workspaceStore != nil {
+                        Button { showsWorkspace = true } label: {
+                            Label("Notes and todos", systemImage: "note.text")
+                                .labelStyle(.iconOnly)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Project notes and todos")
+                        .accessibilityIdentifier("cofleet-agent-bay-workspace")
+                        Button { showsPetLibrary = true } label: {
+                            Label("Choose pet", systemImage: "pawprint.circle")
+                                .labelStyle(.iconOnly)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Choose project pet")
+                    }
+                    Button { openSessionHistory() } label: {
+                        Label("Sessions", systemImage: "clock.arrow.circlepath")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Session history")
+                    Button { showsRuntime = true } label: {
+                        Label("Runtime", systemImage: "slider.horizontal.3")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Model, reasoning, speed, access, and conversation display")
+                }
+
+                HStack(spacing: 7) {
+                    Circle().fill(headerStatusColor).frame(width: 7, height: 7)
+                    Text(headerStatusLabel)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    if let host = selectedHost {
+                        Text("·")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Text(host.displayName.uppercased())
+                            .font(.caption2.monospaced().bold())
+                            .foregroundStyle(CoFleetTheme.cyan)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.65)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Text(currentModelDisplayName)
+                        .font(.caption2.monospaced().bold())
+                        .foregroundStyle(CoFleetTheme.cyan)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("cofleet.current-model")
+                    if let contextLabel = selectedModelContextLabel {
+                        Text(contextLabel)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(.ultraThinMaterial.opacity(0.72))
     }
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            ForEach(turnStore.interactions) { interaction in
+                CoFleetInteractionView(interaction: interaction) { decision, answers in
+                    Task {
+                        do {
+                            try await turnStore.resolve(
+                                interactionID: interaction.id,
+                                decision: decision,
+                                answers: answers
+                            )
+                        } catch {
+                            composerErrorMessage = error.localizedDescription
+                        }
+                    }
+                }
+                .id(interaction.id)
+            }
+
+            if let composerErrorMessage {
+                Label(composerErrorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(CoFleetTheme.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let error = turnStore.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(CoFleetTheme.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if !turnStore.attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -174,7 +556,7 @@ public struct CoFleetAgentBayView: View {
                 }
             }
 
-            HStack(alignment: .bottom, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 9) {
                 Menu {
                     Button {
                         composerErrorMessage = nil
@@ -196,53 +578,199 @@ public struct CoFleetAgentBayView: View {
                     }
                     #endif
                 } label: {
-                    Image(systemName: "paperclip")
-                        .font(.headline)
-                        .frame(width: 38, height: 38)
-                        .background(CoFleetTheme.elevated, in: Circle())
+                    Image(systemName: "plus")
+                        .frame(width: 34, height: 40)
                 }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
                 .accessibilityLabel("Add image attachment")
 
                 TextField("Message Codex…", text: $turnStore.draft, axis: .vertical)
-                    .lineLimit(1...6)
                     .textFieldStyle(.plain)
-                    .padding(12)
-                    .background(CoFleetTheme.elevated, in: RoundedRectangle(cornerRadius: 14))
+                    .focused($composerIsFocused)
+                    .submitLabel(.send)
+                    .lineLimit(1...4)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 11)
+                    .background(Color.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 15))
+                    .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.1)))
                     .onSubmit(send)
-                Button(action: send) {
-                    Image(systemName: "arrow.up")
-                        .font(.headline.bold())
-                        .frame(width: 38, height: 38)
-                        .background(CoFleetTheme.cyan, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!turnStore.canSend)
-                .accessibilityLabel("Send message")
-            }
+                    .disabled(turnStore.activeTurn != nil || isPreparingSend)
+                    .accessibilityIdentifier("cofleet.message-field")
 
-            if let composerErrorMessage {
-                Text(composerErrorMessage)
-                    .font(.caption)
-                    .foregroundStyle(CoFleetTheme.danger)
-                    .accessibilityLabel("Attachment error: \(composerErrorMessage)")
-            } else {
-                Text(attachmentHelp)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if turnStore.activeTurn != nil {
+                    Button {
+                        Task {
+                            do {
+                                try await turnStore.interrupt()
+                            } catch {
+                                composerErrorMessage = error.localizedDescription
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "stop.fill")
+                            .fontWeight(.black)
+                            .frame(width: 40, height: 40)
+                            .foregroundStyle(Color.white)
+                            .background(Color.red.opacity(0.85), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Stop turn")
+                    .accessibilityIdentifier("cofleet.stop-button")
+                } else {
+                    Button(action: send) {
+                        Image(systemName: "arrow.up")
+                            .fontWeight(.black)
+                            .frame(width: 40, height: 40)
+                            .foregroundStyle(Color(red: 0.02, green: 0.08, blue: 0.13))
+                            .background(CoFleetTheme.cyan, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!turnStore.canSend || isPreparingSend)
+                    .accessibilityLabel("Send message")
+                    .accessibilityIdentifier("cofleet.send-button")
+                }
             }
         }
         .padding(12)
-        .background(CoFleetTheme.surface)
+        .background(.ultraThinMaterial)
     }
 
     private func send() {
+        guard !isPreparingSend else { return }
         composerErrorMessage = nil
+        isPreparingSend = true
+        composerIsFocused = false
+        followsLatestMessage = true
         Task {
+            defer { isPreparingSend = false }
             do {
+                guard let project = fleetStore?.selectedProject else {
+                    throw CoFleetClientError.unavailable("Choose a project before sending a message.")
+                }
+                if threadStore.loadedHostID != project.hostID
+                    || threadStore.loadedProjectID != project.id {
+                    await threadStore.loadInitial(hostID: project.hostID, projectID: project.id)
+                }
+                let session: CoFleetSessionSummary
+                if let selected = threadStore.selectedSession,
+                   selected.hostID == project.hostID,
+                   selected.projectID == project.id {
+                    session = selected
+                } else {
+                    session = try await threadStore.createSession(settings: settings)
+                }
+                if turnStore.loadedHostID != project.hostID
+                    || turnStore.loadedProjectID != project.id
+                    || turnStore.loadedSessionID != session.id {
+                    await turnStore.open(
+                        hostID: project.hostID,
+                        projectID: project.id,
+                        sessionID: session.id
+                    )
+                }
                 _ = try await turnStore.send(settings: settings)
+                threadStore.updateLoadedProjectPreview(items: turnStore.items)
             } catch {
                 composerErrorMessage = error.localizedDescription
             }
+        }
+    }
+
+    private var currentModelDisplayName: String {
+        // `settings` is the live editor state for the selected task. Prefer it over
+        // the immutable session summary so the label changes as soon as the user
+        // moves a runtime control, before the next turn is sent.
+        CoFleetRuntimeLabelResolver.label(settings: settings, models: models)
+    }
+
+    private var selectedProject: CoFleetProject? {
+        fleetStore?.selectedProject
+    }
+
+    private var selectedProjectActivity: CoFleetProjectActivity? {
+        guard let projectID = selectedProject?.id else { return nil }
+        return fleetStore?.activity(for: projectID)?.activity
+    }
+
+    private var selectedProjectIsWorking: Bool {
+        switch selectedProjectActivity {
+        case .thinking, .reasoning, .runningCommand: true
+        case .idle, .approval, .question, .replied, .none: false
+        }
+    }
+
+    private var selectedHost: CoFleetHostInfo? {
+        guard let hostID = selectedProject?.hostID else { return nil }
+        return fleetStore?.hosts.first { $0.id == hostID }
+    }
+
+    private var selectedModelContextLabel: String? {
+        let selected = settings.modelID.flatMap { selectedID in
+            models.first { $0.id == selectedID }
+        } ?? models.first(where: \.isDefault) ?? models.first
+        guard let contextWindow = selected?.contextWindow, contextWindow > 0 else { return nil }
+        return contextWindow >= 1_000
+            ? "\(contextWindow / 1_000)K context"
+            : "\(contextWindow) context"
+    }
+
+    private var headerStatusLabel: String {
+        if turnStore.activeTurn != nil { return "Working" }
+        if let selectedProjectActivity {
+            switch selectedProjectActivity {
+            case .idle: break
+            case .thinking: return "Thinking"
+            case .reasoning: return "Reasoning"
+            case .runningCommand: return "Running command"
+            case .approval: return "Approval needed"
+            case .question: return "Question asked"
+            case .replied: return "Replied"
+            }
+        }
+        guard let project = selectedProject else { return "Choose a project" }
+        switch project.state {
+        case .idle: return selectedHost?.reachability == .online ? "Ready" : "Host unavailable"
+        case .working: return "Working"
+        case .waitingForApproval: return "Approval needed"
+        case .waitingForAnswer: return "Question asked"
+        case .replied: return "Replied"
+        case .unavailable: return "Unavailable"
+        }
+    }
+
+    private var headerStatusColor: Color {
+        if turnStore.activeTurn != nil { return .yellow }
+        switch selectedProject?.state {
+        case .waitingForApproval, .waitingForAnswer: return CoFleetTheme.orange
+        case .unavailable: return CoFleetTheme.orange
+        case .replied: return CoFleetTheme.green
+        case .idle, .working, .none:
+            return selectedHost?.reachability == .online ? CoFleetTheme.green : CoFleetTheme.orange
+        }
+    }
+
+    private var selectedProjectPetManifest: CoFleetPetManifest? {
+        guard let selectedPetID = workspaceStore?.selectedPetID else { return nil }
+        return workspaceStore?.pets.first { $0.id == selectedPetID }
+    }
+
+    private func hatchAction(
+        for project: CoFleetProject
+    ) -> (@MainActor () async throws -> Void)? {
+        guard let onHatchPet else { return nil }
+        return { try await onHatchPet(project) }
+    }
+
+    private func openSessionHistory() {
+        composerErrorMessage = nil
+        guard let project = fleetStore?.selectedProject else {
+            showsSessions = true
+            return
+        }
+        Task {
+            await threadStore.loadInitial(hostID: project.hostID, projectID: project.id)
+            showsSessions = true
         }
     }
 
@@ -363,6 +891,86 @@ public struct CoFleetAgentBayView: View {
     #endif
 }
 
+enum CoFleetRuntimeLabelResolver {
+    static func label(
+        settings: CoFleetSessionSettings,
+        models: [CoFleetModelInfo]
+    ) -> String {
+        let selectedID = settings.modelID
+        let modelName: String
+        if let selectedID {
+            modelName = models.first(where: { $0.id == selectedID })?.displayName ?? selectedID
+        } else {
+            modelName = models.first(where: \.isDefault)?.displayName
+                ?? models.first?.displayName
+                ?? "Codex"
+        }
+        let effortName = CoFleetReasoningSliderPolicy.displayName(settings.reasoningEffort)
+        return "\(modelName) · \(effortName)"
+    }
+
+}
+
+enum CoFleetConversationPaging {
+    static let initialLimit = 40
+    static let additionalLimit = 40
+
+    static func visibleItemIDs(_ ids: [String], limit: Int) -> [String] {
+        Array(ids.suffix(max(initialLimit, limit)))
+    }
+
+    static func nextLimit(current: Int, total: Int) -> Int {
+        min(max(initialLimit, current + additionalLimit), total)
+    }
+}
+
+private struct CoFleetConversationRevision: Equatable {
+    let sessionID: String?
+    let entryCount: Int
+    let lastItemID: String?
+    let lastTextCount: Int
+    let lastState: CoFleetTurnItemState?
+}
+
+private struct CoFleetConversationBottomPositionPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct CoFleetAgentBayAvatar: View {
+    let name: String
+    let manifest: CoFleetPetManifest?
+    let asset: CoFleetPetAsset?
+    let action: CoFleetActionIndicator
+    let working: Bool
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(CoFleetTheme.cyan.opacity(0.15))
+                .frame(width: size * 1.15, height: size * 1.15)
+                .blur(radius: working ? 1 : 3)
+            Circle()
+                .fill(Color(red: 0.04, green: 0.10, blue: 0.17))
+                .overlay(Circle().stroke(CoFleetTheme.cyan.opacity(0.4)))
+                .frame(width: size, height: size)
+            CoFleetPetSpriteView(
+                name: name,
+                manifest: manifest,
+                asset: asset,
+                action: action,
+                size: size * 0.92
+            )
+            .shadow(color: CoFleetTheme.cyan.opacity(0.45), radius: 7, y: 3)
+        }
+        .frame(width: size * 1.15, height: size * 1.15)
+    }
+}
+
 private struct CoFleetConversationEntry: Identifiable {
     enum Content {
         case message(CoFleetTurnItem)
@@ -409,66 +1017,64 @@ private extension CoFleetTurnItemKind {
 
 private struct CoFleetActivityTimeline: View {
     let items: [CoFleetTurnItem]
+    let preference: CoFleetTracePresentationPreference
+    let accent: Color
     @State private var isExpanded: Bool
 
-    init(items: [CoFleetTurnItem]) {
+    init(
+        items: [CoFleetTurnItem],
+        preference: CoFleetTracePresentationPreference = .collapsed,
+        accent: Color = CoFleetTheme.cyan
+    ) {
         self.items = items
-        _isExpanded = State(initialValue: items.contains { $0.state == .streaming || $0.state == .failed })
+        self.preference = preference
+        self.accent = accent
+        _isExpanded = State(initialValue: preference == .expanded)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 9) {
             Button {
                 withAnimation(.easeInOut(duration: 0.16)) { isExpanded.toggle() }
             } label: {
-                HStack(spacing: 9) {
+                HStack(spacing: 7) {
                     Image(systemName: statusSymbol)
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(statusColor)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(statusTitle)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Text(summary)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+
+                    Text(workLabel)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+
                     Spacer(minLength: 8)
-                    if isActive {
-                        ProgressView().controlSize(.mini).tint(CoFleetTheme.cyan)
-                    }
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
                 .contentShape(Rectangle())
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(statusTitle), \(summary), \(isExpanded ? "collapse" : "expand")")
+            .accessibilityLabel("\(workLabel), \(summary), \(isExpanded ? "collapse" : "expand")")
 
             if isExpanded {
-                Divider().padding(.leading, 42)
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         activityRow(item, drawsConnector: index < items.count - 1)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
         }
         .frame(maxWidth: 700, alignment: .leading)
-        .background(CoFleetTheme.subtleFill, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(statusColor.opacity(hasFailure ? 0.38 : 0.16))
+        .onChange(of: preference) { _, value in
+            isExpanded = value == .expanded
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func activityRow(_ item: CoFleetTurnItem, drawsConnector: Bool) -> some View {
@@ -494,7 +1100,7 @@ private struct CoFleetActivityTimeline: View {
                     Text(label(for: item))
                         .font(.caption.weight(.semibold))
                     if item.state == .streaming {
-                        ProgressView().controlSize(.mini).tint(CoFleetTheme.cyan)
+                        ProgressView().controlSize(.mini).tint(accent)
                     } else if item.state == .failed {
                         Text("Failed").font(.caption2.weight(.semibold)).foregroundStyle(CoFleetTheme.danger)
                     }
@@ -515,9 +1121,22 @@ private struct CoFleetActivityTimeline: View {
 
     private var isActive: Bool { items.contains { $0.state == .streaming || $0.state == .pending } }
     private var hasFailure: Bool { items.contains { $0.state == .failed } }
-    private var statusTitle: String { hasFailure ? "Needs attention" : (isActive ? "Working" : "Worked") }
     private var statusSymbol: String { hasFailure ? "xmark.circle.fill" : (isActive ? "circle.dotted" : "checkmark.circle.fill") }
-    private var statusColor: Color { hasFailure ? CoFleetTheme.danger : (isActive ? CoFleetTheme.cyan : CoFleetTheme.green) }
+    private var statusColor: Color { hasFailure ? CoFleetTheme.danger : (isActive ? accent : CoFleetTheme.green) }
+
+    private var workLabel: String {
+        if hasFailure { return "Needs attention after \(durationLabel)" }
+        return "\(isActive ? "Working" : "Worked") for \(durationLabel)"
+    }
+
+    private var durationLabel: String {
+        guard let first = items.map(\.createdAt).min() else { return "<1s" }
+        let end = isActive ? Date() : (items.map(\.createdAt).max() ?? first)
+        let duration = max(0, end.timeIntervalSince(first))
+        if duration < 1 { return "<1s" }
+        if duration < 60 { return "\(Int(duration.rounded()))s" }
+        return "\(Int(duration) / 60)m \(Int(duration) % 60)s"
+    }
 
     private var summary: String {
         var parts: [String] = []
@@ -556,70 +1175,82 @@ private struct CoFleetActivityTimeline: View {
 
     private func color(for item: CoFleetTurnItem) -> Color {
         if item.state == .failed { return CoFleetTheme.danger }
-        return item.kind == .fileChange ? CoFleetTheme.green : CoFleetTheme.cyan
+        return item.kind == .fileChange ? CoFleetTheme.green : accent
     }
 }
 
 public struct CoFleetTurnItemView: View {
     public var item: CoFleetTurnItem
+    public var accent: Color
+    public var rendersMarkdown: Bool
+    public var isStreaming: Bool
 
-    public init(item: CoFleetTurnItem) {
+    public init(
+        item: CoFleetTurnItem,
+        accent: Color = CoFleetTheme.cyan,
+        rendersMarkdown: Bool = true,
+        isStreaming: Bool = false
+    ) {
         self.item = item
+        self.accent = accent
+        self.rendersMarkdown = rendersMarkdown
+        self.isStreaming = isStreaming
     }
 
+    @ViewBuilder
     public var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Label(label, systemImage: symbol)
-                .font(.caption2.monospaced().weight(.bold))
-                .textCase(.uppercase)
-                .foregroundStyle(tint)
-            markdownText(item.text)
-                .textSelection(.enabled)
-            if item.state == .streaming { ProgressView().controlSize(.small) }
-        }
-        .frame(maxWidth: item.kind == .userMessage ? 560 : 700, alignment: .leading)
-        .padding(.horizontal, 13)
-        .padding(.vertical, 11)
-        .background(background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(tint.opacity(item.kind == .userMessage ? 0.22 : 0.08))
-        }
-        .frame(maxWidth: .infinity, alignment: item.kind == .userMessage ? .trailing : .leading)
-    }
-
-    private func markdownText(_ source: String) -> Text {
-        if let attributed = try? AttributedString(markdown: source) { return Text(attributed) }
-        return Text(source)
-    }
-
-    private var label: String {
-        switch item.kind {
-        case .userMessage: "You"
-        case .assistantMessage: "Codex"
-        case .reasoning: "Reasoning"
-        case .command: "Command"
-        case .fileChange: "File change"
-        case .tool: "Tool"
-        case .system: "System"
-        }
-    }
-
-    private var symbol: String {
-        switch item.kind {
-        case .userMessage: "person.fill"
-        case .assistantMessage: "terminal.fill"
-        case .reasoning: "brain.head.profile"
-        case .command: "chevron.left.forwardslash.chevron.right"
-        case .fileChange: "doc.badge.gearshape"
-        case .tool: "wrench.and.screwdriver.fill"
-        case .system: "info.circle.fill"
+        if item.kind == .system {
+            Label(item.text, systemImage: "arrow.triangle.swap")
+                .font(.caption.bold())
+                .foregroundStyle(CoFleetTheme.orange)
+                .padding(9)
+                .background(CoFleetTheme.orange.opacity(0.1), in: Capsule())
+        } else {
+            HStack {
+                if item.kind == .userMessage { Spacer(minLength: 60) }
+                VStack(alignment: .leading, spacing: 7) {
+                    if !item.text.isEmpty {
+                        if item.kind == .assistantMessage, rendersMarkdown, !isStreaming {
+                            CoFleetMessageMarkdownView(source: item.text)
+                        } else {
+                            Text(item.text)
+                                .font(.subheadline)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    if isStreaming {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(accent)
+                    }
+                }
+                .padding(.horizontal, 13)
+                .padding(.vertical, 11)
+                .background(
+                    item.kind == .userMessage ? accent.opacity(0.22) : Color.white.opacity(0.06),
+                    in: RoundedRectangle(cornerRadius: 15)
+                )
+                .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.08)))
+                if item.kind == .assistantMessage { Spacer(minLength: 60) }
+            }
         }
     }
+}
 
-    private var tint: Color { item.kind == .userMessage ? CoFleetTheme.violet : CoFleetTheme.cyan }
-    private var background: Color {
-        item.kind == .userMessage ? CoFleetTheme.violet.opacity(0.16) : CoFleetTheme.subtleFill
+private struct CoFleetMessageMarkdownView: View {
+    let source: String
+
+    var body: some View {
+        Group {
+            if let attributed = try? AttributedString(markdown: source) {
+                Text(attributed)
+            } else {
+                Text(source)
+            }
+        }
+        .font(.subheadline)
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -638,22 +1269,39 @@ public struct CoFleetInteractionView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(interaction.title, systemImage: "hand.raised.fill")
-                .font(.headline)
-                .foregroundStyle(CoFleetTheme.orange)
-            Text(interaction.detail).font(.callout)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label(interaction.title, systemImage: "hand.raised.fill")
+                    .font(.headline)
+                    .foregroundStyle(CoFleetTheme.orange)
+                Spacer(minLength: 8)
+                Text("CODEX")
+                    .font(.caption2.monospaced().weight(.bold))
+                    .foregroundStyle(CoFleetTheme.cyan)
+            }
+            if !interaction.detail.isEmpty {
+                Text(interaction.detail)
+                    .font(interaction.kind == .question ? .callout : .caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(interaction.kind == .question ? 0 : 9)
+                    .background(
+                        interaction.kind == .question ? Color.clear : Color.black.opacity(0.24),
+                        in: RoundedRectangle(cornerRadius: 9)
+                    )
+            }
             if interaction.kind == .question {
                 ForEach(interaction.questions) { question in
                     questionView(question)
                 }
             }
-            HStack {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 115), spacing: 8)], spacing: 8) {
                 ForEach(interaction.choices, id: \.self) { choice in
                     Button(choiceLabel(choice)) {
                         resolve(choice)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(choice == .denyAndStop ? CoFleetTheme.danger : CoFleetTheme.cyan)
+                    .frame(maxWidth: .infinity)
                     .disabled(choice == .submitAnswer && !canSubmitAnswers)
                 }
             }
@@ -661,9 +1309,9 @@ public struct CoFleetInteractionView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(14)
-        .background(CoFleetTheme.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
-        .overlay { RoundedRectangle(cornerRadius: 14).stroke(CoFleetTheme.orange.opacity(0.45)) }
+        .padding(12)
+        .background(CoFleetTheme.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 15))
+        .overlay { RoundedRectangle(cornerRadius: 15).stroke(CoFleetTheme.orange.opacity(0.35)) }
     }
 
     private func choiceLabel(_ choice: CoFleetInteractionDecision) -> String {
@@ -734,6 +1382,19 @@ public struct CoFleetInteractionView: View {
     private var canSubmitAnswers: Bool {
         !interaction.questions.isEmpty && interaction.questions.allSatisfy {
             !(answers[$0.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func coFleetReaderScrollPhaseChanged(_ action: @escaping @MainActor (Bool) -> Void) -> some View {
+        if #available(iOS 18.0, macOS 15.0, *) {
+            onScrollPhaseChange { _, phase in
+                action(phase != .idle)
+            }
+        } else {
+            self
         }
     }
 }

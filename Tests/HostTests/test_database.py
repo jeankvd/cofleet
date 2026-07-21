@@ -1,8 +1,9 @@
 import pathlib
+import sqlite3
 import tempfile
 import unittest
 
-from cofleet_host.database import Database
+from cofleet_host.database import Database, SESSION_CATALOG_CACHE_MAX_BYTES
 from cofleet_host.errors import APIError
 from cofleet_host.util import random_token
 
@@ -46,6 +47,77 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "duplicate_project")
         self.database.remove_project(project["id"])
         self.assertTrue(root.is_dir())
+
+    def test_session_catalog_cache_is_bounded_validated_and_project_scoped(self) -> None:
+        root = pathlib.Path(self.temporary.name) / "CachedProject"
+        root.mkdir()
+        project = self.database.create_project("Cached", str(root), str(root))
+        payload = {
+            "sessions": [
+                {
+                    "id": "thread-1",
+                    "hostID": "host-1",
+                    "projectID": project["id"],
+                    "title": "Latest",
+                    "archived": False,
+                    "provider": "codex",
+                }
+            ],
+            "nextCursor": "next",
+        }
+        self.assertTrue(self.database.put_session_catalog_cache(project["id"], payload))
+        self.assertFalse(self.database.put_session_catalog_cache(project["id"], payload))
+        self.assertEqual(self.database.cached_current_session_id(project["id"]), "thread-1")
+        self.database.remove_project(project["id"])
+        self.assertIsNone(self.database.get_session_catalog_cache(project["id"]))
+
+    def test_malformed_and_oversized_session_catalog_rows_are_ignored(self) -> None:
+        root = pathlib.Path(self.temporary.name) / "MalformedProject"
+        root.mkdir()
+        project = self.database.create_project("Malformed", str(root), str(root))
+        with self.database.transaction() as connection:
+            connection.execute(
+                "INSERT INTO session_catalog_cache(project_id, payload_json, updated_at) "
+                "VALUES(?, ?, 1)",
+                (project["id"], "{not-json"),
+            )
+        self.assertIsNone(self.database.get_session_catalog_cache(project["id"]))
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE session_catalog_cache SET payload_json = ? WHERE project_id = ?",
+                ("x" * (SESSION_CATALOG_CACHE_MAX_BYTES + 1), project["id"]),
+            )
+        self.assertIsNone(self.database.get_session_catalog_cache(project["id"]))
+        with self.assertRaises(ValueError):
+            self.database.put_session_catalog_cache(
+                project["id"], {"sessions": [{"transcript": "secret"}], "nextCursor": None}
+            )
+
+    def test_schema_two_migrates_session_catalog_cache_without_rebuild(self) -> None:
+        path = pathlib.Path(self.temporary.name) / "schema-two.sqlite3"
+        connection = sqlite3.connect(str(path))
+        connection.executescript(
+            "CREATE TABLE schema_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+            "INSERT INTO schema_metadata(key, value) VALUES('schema_version', '2');"
+            "CREATE TABLE projects(id TEXT PRIMARY KEY, name TEXT NOT NULL, "
+            "root_path TEXT NOT NULL, canonical_path TEXT NOT NULL UNIQUE, "
+            "created_at REAL NOT NULL, updated_at REAL NOT NULL);"
+        )
+        connection.commit()
+        connection.close()
+        migrated = Database(path)
+        try:
+            row = migrated._connection.execute(
+                "SELECT value FROM schema_metadata WHERE key = 'schema_version'"
+            ).fetchone()
+            self.assertEqual(row["value"], "3")
+            table = migrated._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'session_catalog_cache'"
+            ).fetchone()
+            self.assertIsNotNone(table)
+        finally:
+            migrated.close()
 
     def test_note_and_todo_revisions_detect_conflicts(self) -> None:
         root = pathlib.Path(self.temporary.name) / "Project"

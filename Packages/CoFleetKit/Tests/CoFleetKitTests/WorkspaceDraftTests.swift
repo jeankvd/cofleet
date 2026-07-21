@@ -44,6 +44,37 @@ final class WorkspaceDraftTests: XCTestCase {
     }
 
     @MainActor
+    func testBattleTodosLoadPerProjectAndToggleTheHostRecord() async {
+        let todo = CoFleetTodoItem(
+            id: "todo-battle",
+            hostID: hostID,
+            projectID: "project-one",
+            title: "Restore the battle objective panel",
+            sortIndex: 0,
+            revision: 2
+        )
+        let repository = WorkspaceRepositoryFake(note: note(revision: 0), todos: [todo])
+        let store = WorkspaceStore(repository: repository, noteDraftStorage: MemoryNoteDraftStorage())
+        let project = CoFleetProject(
+            id: "project-one",
+            hostID: hostID,
+            displayName: "Example Project",
+            canonicalPath: "/Users/example/ExampleProject"
+        )
+
+        await store.loadBattleTodos(for: [project])
+        XCTAssertEqual(store.battleTodosByProjectID[project.id], [todo])
+
+        await store.toggleBattleTodo(projectID: project.id, todoID: todo.id)
+
+        let saved = store.battleTodosByProjectID[project.id]?.first
+        XCTAssertEqual(saved?.isCompleted, true)
+        XCTAssertEqual(saved?.revision, 3)
+        let todoMutationCount = await repository.todoMutationCount()
+        XCTAssertEqual(todoMutationCount, 1)
+    }
+
+    @MainActor
     func testDraftWithMatchingBaseCanSaveAndIsCleared() async throws {
         let hostNote = note(revision: 3, markdown: "Host text")
         let key = CoFleetNoteDraftKey(hostID: hostID, projectID: "project-one", sessionID: nil)
@@ -274,12 +305,14 @@ private final class MemoryNoteDraftStorage: CoFleetNoteDraftStorage {
 
 private actor WorkspaceRepositoryFake: CoFleetWorkspaceRepository {
     private var hostNote: CoFleetNote
+    private var hostTodos: [CoFleetTodoItem]
     private var noteFetches = 0
     private var noteSaveETags: [String] = []
     private var todoMutations = 0
 
-    init(note: CoFleetNote) {
+    init(note: CoFleetNote, todos: [CoFleetTodoItem] = []) {
         hostNote = note
+        hostTodos = todos
     }
 
     func fetchNote(hostID: CoFleetHostID, projectID: String, sessionID: String?) async throws -> CoFleetNote {
@@ -300,11 +333,21 @@ private actor WorkspaceRepositoryFake: CoFleetWorkspaceRepository {
         return .saved(saved)
     }
 
-    func fetchTodos(hostID: CoFleetHostID, projectID: String) async throws -> [CoFleetTodoItem] { [] }
+    func fetchTodos(hostID: CoFleetHostID, projectID: String) async throws -> [CoFleetTodoItem] {
+        hostTodos.filter { $0.hostID == hostID && $0.projectID == projectID }
+    }
 
     func saveTodo(_ todo: CoFleetTodoItem, expectedETag: String?) async throws -> CoFleetTodoItem {
         todoMutations += 1
-        return todo
+        var saved = todo
+        saved.revision += 1
+        saved.updatedAt = .now
+        if let index = hostTodos.firstIndex(where: { $0.id == saved.id }) {
+            hostTodos[index] = saved
+        } else {
+            hostTodos.append(saved)
+        }
+        return saved
     }
 
     func deleteTodo(hostID: CoFleetHostID, id: String, expectedETag: String) async throws {

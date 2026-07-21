@@ -13,6 +13,8 @@ public final class FleetStore {
     public private(set) var deviceOperationHostIDs: Set<CoFleetHostID> = []
     public private(set) var deviceErrorMessage: String?
     public private(set) var collapsedHostIDs: Set<CoFleetHostID> = []
+    public private(set) var projectActivityByProjectID: [String: CoFleetProjectActivitySnapshot] = [:]
+    public private(set) var activityRevision: UInt = 0
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
     public var selectedProjectID: String?
@@ -58,6 +60,61 @@ public final class FleetStore {
     public var selectedProject: CoFleetProject? {
         guard let selectedProjectID else { return visibleProjects.first }
         return projects.first { $0.id == selectedProjectID }
+    }
+
+    public func activity(for projectID: String) -> CoFleetProjectActivitySnapshot? {
+        projectActivityByProjectID[projectID]
+    }
+
+    /// Applies a host event to the richer activity projection and mirrors its
+    /// coarse state onto the project model used by existing Progress/Active UI.
+    public func applyHostEvent(_ event: CoFleetHostEvent, to projectID: String) {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        let current = projectActivityByProjectID[projectID]
+        guard let next = CoFleetProjectActivityReducer.reduce(
+            current: current,
+            projectID: projectID,
+            event: event
+        ) else { return }
+        guard next != current || projects[index].state != next.activity.projectState else { return }
+        projectActivityByProjectID[projectID] = next
+        projects[index].state = next.activity.projectState
+        activityRevision &+= 1
+    }
+
+    public func setProjectActivity(
+        _ activity: CoFleetProjectActivity,
+        projectID: String,
+        sessionID: String? = nil,
+        turnID: String? = nil,
+        source: CoFleetProjectActivitySource = .unknown,
+        observedAt: Date = .now
+    ) {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        let previous = projectActivityByProjectID[projectID]
+        let next = CoFleetProjectActivitySnapshot(
+            projectID: projectID,
+            sessionID: sessionID ?? previous?.sessionID,
+            turnID: turnID ?? previous?.turnID,
+            activity: activity,
+            observedAt: observedAt,
+            source: source == .unknown ? (previous?.source ?? .unknown) : source
+        )
+        guard next != previous || projects[index].state != activity.projectState else { return }
+        projectActivityByProjectID[projectID] = next
+        projects[index].state = activity.projectState
+        activityRevision &+= 1
+    }
+
+    public func setCurrentSessionID(
+        _ sessionID: String?,
+        projectID: String,
+        hostID: CoFleetHostID
+    ) {
+        guard let index = projects.firstIndex(where: {
+            $0.id == projectID && $0.hostID == hostID
+        }) else { return }
+        projects[index].currentSessionID = sessionID
     }
 
     public func refresh() async {
@@ -252,6 +309,7 @@ public final class FleetStore {
     public func removeProject(id: String) async throws {
         try await repository.removeProject(id: id)
         projects.removeAll { $0.id == id }
+        if projectActivityByProjectID.removeValue(forKey: id) != nil { activityRevision &+= 1 }
         preferences.orderedProjectIDs.removeAll { $0 == id }
         preferences.hiddenProjectIDs.remove(id)
         persistPreferences()
@@ -364,8 +422,14 @@ public final class FleetStore {
     }
 
     private func removeHostFromView(_ hostID: CoFleetHostID) {
+        let removedProjectIDs = Set(projects.lazy.filter { $0.hostID == hostID }.map(\.id))
         hosts.removeAll { $0.id == hostID }
         projects.removeAll { $0.hostID == hostID }
+        let previousActivityCount = projectActivityByProjectID.count
+        projectActivityByProjectID = projectActivityByProjectID.filter {
+            !removedProjectIDs.contains($0.key)
+        }
+        if previousActivityCount != projectActivityByProjectID.count { activityRevision &+= 1 }
         accounts[hostID] = nil
         accountLimits[hostID] = nil
         pairedDevices[hostID] = nil
@@ -414,8 +478,15 @@ public final class FleetStore {
         for index in fetchedProjects.indices {
             fetchedProjects[index].sortIndex = index
             fetchedProjects[index].isVisible = !preferences.hiddenProjectIDs.contains(fetchedProjects[index].id)
+            if let activity = projectActivityByProjectID[fetchedProjects[index].id] {
+                fetchedProjects[index].state = activity.activity.projectState
+            }
         }
         projects = fetchedProjects
+        let knownProjectIDs = Set(projects.map(\.id))
+        projectActivityByProjectID = projectActivityByProjectID.filter {
+            knownProjectIDs.contains($0.key)
+        }
         captureCurrentOrder()
         persistPreferences()
     }

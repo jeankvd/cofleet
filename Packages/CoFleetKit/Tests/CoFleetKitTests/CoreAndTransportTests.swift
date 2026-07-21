@@ -273,11 +273,13 @@ final class CoreAndTransportTests: XCTestCase {
     }
 
     func testResponsivePolicies() {
-        XCTAssertEqual(CoFleetResponsivePolicy.progressColumns(availableWidth: 759), .one)
-        XCTAssertEqual(CoFleetResponsivePolicy.progressColumns(availableWidth: 760), .two)
-        XCTAssertFalse(CoFleetResponsivePolicy.activeUsesSideBySide(availableWidth: 819))
-        XCTAssertTrue(CoFleetResponsivePolicy.activeUsesSideBySide(availableWidth: 820))
-        XCTAssertTrue(CoFleetResponsivePolicy.cardHeaderPlacesNotesBesideIdentity(availableWidth: 430))
+        XCTAssertEqual(CoFleetResponsivePolicy.progressColumns(availableWidth: 863), .one)
+        XCTAssertEqual(CoFleetResponsivePolicy.progressColumns(availableWidth: 864), .two)
+        #if os(macOS)
+        XCTAssertEqual(CoFleetResponsivePolicy.activePresentation, .sideBySide)
+        #else
+        XCTAssertEqual(CoFleetResponsivePolicy.activePresentation, .vertical)
+        #endif
     }
 
     func testRemoteThreadNeverGetsCodexDeepLink() {
@@ -404,6 +406,131 @@ final class StoreTests: XCTestCase {
 
         let requests = await repository.desktopOpenRequests
         XCTAssertEqual(requests, [.init(hostID: host, sessionID: "session-0")])
+    }
+
+    func testThreadStoreOpensCachedHostSessionWithoutLoadingCatalog() async throws {
+        let repository = ThreadRepositoryFake()
+        let store = ThreadStore(repository: repository)
+        let host = CoFleetHostID(rawValue: "sample-host")
+
+        try await store.openInCodex(hostID: host, sessionID: "cached-session")
+
+        let requests = await repository.desktopOpenRequests
+        XCTAssertEqual(requests, [.init(hostID: host, sessionID: "cached-session")])
+        let limits = await repository.requestedLimits
+        XCTAssertTrue(limits.isEmpty)
+    }
+
+    func testThreadStoreRefreshesFreshestTranscriptPreviewPerProject() async {
+        let repository = ThreadRepositoryFake()
+        let store = ThreadStore(repository: repository, previewRepository: repository)
+        let host = CoFleetHostID(rawValue: "sample-host")
+        let project = CoFleetProject(
+            id: "project-sample",
+            hostID: host,
+            displayName: "Sample",
+            canonicalPath: "/tmp/sample"
+        )
+
+        await store.refreshLatestSessionPreviews(for: [project])
+
+        XCTAssertEqual(store.latestSession(for: project.id)?.id, "session-0")
+        XCTAssertEqual(
+            store.latestPreview(for: project.id)?.messages.map(\.text),
+            ["Latest question", "Latest answer"]
+        )
+    }
+
+    func testConversationPreviewRequiresAUserTurn() {
+        let assistantOnly = CoFleetProjectConversationPreview.recentConversationMessages(from: [
+            .init(id: "assistant", turnID: "turn", kind: .assistantMessage, text: "Orphaned response"),
+            .init(id: "reasoning", turnID: "turn", kind: .reasoning, text: "Hidden reasoning"),
+        ])
+
+        XCTAssertTrue(assistantOnly.isEmpty)
+    }
+
+    func testThreadStoreSkipsEmptyNewestTaskForFreshestPopulatedPreview() async {
+        let repository = ThreadRepositoryFake(transcriptsBySessionID: [
+            "session-0": [
+                .init(id: "assistant-only", turnID: "empty", kind: .assistantMessage, text: "No initiating user"),
+            ],
+            "session-1": [
+                .init(id: "user", turnID: "populated", kind: .userMessage, text: "Actual latest question"),
+                .init(id: "answer", turnID: "populated", kind: .assistantMessage, text: "Actual latest answer"),
+            ],
+        ])
+        let store = ThreadStore(repository: repository, previewRepository: repository)
+        let project = CoFleetProject(
+            id: "project-sample",
+            hostID: .init(rawValue: "sample-host"),
+            displayName: "Sample",
+            canonicalPath: "/tmp/sample"
+        )
+
+        await store.refreshLatestSessionPreviews(for: [project])
+
+        XCTAssertEqual(store.latestSession(for: project.id)?.id, "session-1")
+        XCTAssertEqual(
+            store.latestPreview(for: project.id)?.messages.map(\.text),
+            ["Actual latest question", "Actual latest answer"]
+        )
+        let transcriptRequests = await repository.transcriptRequests
+        XCTAssertEqual(transcriptRequests, ["session-1"])
+    }
+
+    func testThreadStoreReusesUnchangedLatestTranscriptPreview() async {
+        let repository = ThreadRepositoryFake()
+        let store = ThreadStore(repository: repository, previewRepository: repository)
+        let project = CoFleetProject(
+            id: "project-sample",
+            hostID: .init(rawValue: "sample-host"),
+            displayName: "Sample",
+            canonicalPath: "/tmp/sample"
+        )
+
+        await store.refreshLatestSessionPreviews(for: [project])
+        await store.refreshLatestSessionPreviews(for: [project])
+
+        let transcriptRequests = await repository.transcriptRequests
+        XCTAssertEqual(transcriptRequests, ["session-0"])
+        let requestedLimits = await repository.requestedLimits
+        XCTAssertEqual(requestedLimits, [5])
+    }
+
+    func testThreadStoreReloadsTranscriptWhenLatestTaskChanges() async {
+        let repository = ThreadRepositoryFake()
+        let store = ThreadStore(repository: repository, previewRepository: repository)
+        let project = CoFleetProject(
+            id: "project-sample",
+            hostID: .init(rawValue: "sample-host"),
+            displayName: "Sample",
+            canonicalPath: "/tmp/sample"
+        )
+
+        await store.refreshLatestSessionPreviews(for: [project])
+        await repository.advanceLatestSession()
+        await store.refreshLatestSessionPreviews(for: [project], force: true)
+
+        let transcriptRequests = await repository.transcriptRequests
+        XCTAssertEqual(transcriptRequests, ["session-0", "session-0"])
+    }
+
+    func testThreadStoreReadsAtMostOneTranscriptWhenMetadataHasNoUserPreview() async {
+        let repository = ThreadRepositoryFake(transcriptsBySessionID: [:])
+        let store = ThreadStore(repository: repository, previewRepository: repository)
+        let project = CoFleetProject(
+            id: "project-sample",
+            hostID: .init(rawValue: "sample-host"),
+            displayName: "Sample",
+            canonicalPath: "/tmp/sample"
+        )
+
+        await store.refreshLatestSessionPreviews(for: [project])
+
+        let transcriptRequests = await repository.transcriptRequests
+        XCTAssertEqual(transcriptRequests, ["session-0"])
+        XCTAssertNil(store.latestPreview(for: project.id))
     }
 
     func testFleetStoreDeduplicatesCanonicalHostAndPath() async {
@@ -637,7 +764,7 @@ private actor TurnRepositoryFake: CoFleetTurnRepository {
     }
 }
 
-private actor ThreadRepositoryFake: CoFleetThreadRepository {
+private actor ThreadRepositoryFake: CoFleetThreadRepository, CoFleetTurnRepository {
     struct DesktopOpenRequest: Equatable {
         var hostID: CoFleetHostID
         var sessionID: String
@@ -645,6 +772,13 @@ private actor ThreadRepositoryFake: CoFleetThreadRepository {
 
     private(set) var requestedLimits: [Int] = []
     private(set) var desktopOpenRequests: [DesktopOpenRequest] = []
+    private(set) var transcriptRequests: [String] = []
+    private let transcriptsBySessionID: [String: [CoFleetTurnItem]]?
+    private var sessionRevision = 0
+
+    init(transcriptsBySessionID: [String: [CoFleetTurnItem]]? = nil) {
+        self.transcriptsBySessionID = transcriptsBySessionID
+    }
 
     func fetchSessions(
         hostID: CoFleetHostID,
@@ -656,7 +790,18 @@ private actor ThreadRepositoryFake: CoFleetThreadRepository {
         requestedLimits.append(limit)
         let range = cursor == nil ? 0..<5 : 5..<7
         let items = range.map {
-            CoFleetSessionSummary(id: "session-\($0)", hostID: hostID, projectID: projectID, title: "Session \($0)")
+            let sessionID = "session-\($0)"
+            let transcriptPreview = transcriptsBySessionID?[sessionID]?
+                .first(where: { $0.kind == .userMessage })?.text
+            return CoFleetSessionSummary(
+                id: sessionID,
+                hostID: hostID,
+                projectID: projectID,
+                title: "Session \($0)",
+                updatedAt: Date(timeIntervalSince1970: 100 - Double($0) + Double(sessionRevision)),
+                createdAt: Date(timeIntervalSince1970: 100 - Double($0)),
+                preview: transcriptsBySessionID == nil ? "Latest question" : transcriptPreview
+            )
         }
         return CoFleetSessionPage(items: items, nextCursor: cursor == nil ? "next" : nil)
     }
@@ -680,6 +825,54 @@ private actor ThreadRepositoryFake: CoFleetThreadRepository {
 
     func openSessionInCodex(hostID: CoFleetHostID, sessionID: String) async throws {
         desktopOpenRequests.append(.init(hostID: hostID, sessionID: sessionID))
+    }
+
+    func fetchTranscript(hostID: CoFleetHostID, sessionID: String) async throws -> [CoFleetTurnItem] {
+        transcriptRequests.append(sessionID)
+        if let transcriptsBySessionID {
+            return transcriptsBySessionID[sessionID] ?? []
+        }
+        return [
+            .init(id: "old-user", turnID: "old", kind: .userMessage, text: "Old question"),
+            .init(id: "old-answer", turnID: "old", kind: .assistantMessage, text: "Old answer"),
+            .init(id: "latest-user", turnID: "new", kind: .userMessage, text: "Latest question"),
+            .init(id: "reasoning", turnID: "new", kind: .reasoning, text: "Thinking"),
+            .init(id: "latest-answer", turnID: "new", kind: .assistantMessage, text: "Latest answer"),
+        ]
+    }
+
+    func fetchInteractions(hostID: CoFleetHostID, sessionID: String) async throws -> [CoFleetInteraction] { [] }
+
+    func advanceLatestSession() {
+        sessionRevision += 1
+    }
+
+    func startTurn(
+        hostID: CoFleetHostID,
+        projectID: String,
+        sessionID: String,
+        input: [CoFleetTurnInput],
+        settings: CoFleetSessionSettings,
+        idempotencyKey: UUID
+    ) async throws -> CoFleetTurn {
+        CoFleetTurn(id: "turn", hostID: hostID, sessionID: sessionID, state: .running)
+    }
+
+    func interruptTurn(hostID: CoFleetHostID, sessionID: String, turnID: String) async throws {}
+
+    func resolveInteraction(
+        hostID: CoFleetHostID,
+        interactionID: String,
+        decision: CoFleetInteractionDecision,
+        answers: [String: [String]]?
+    ) async throws {}
+
+    func events(
+        hostID: CoFleetHostID,
+        sessionID: String,
+        afterEventID: String?
+    ) async throws -> AsyncThrowingStream<CoFleetSequencedTurnEvent, Error> {
+        AsyncThrowingStream { continuation in continuation.finish() }
     }
 }
 

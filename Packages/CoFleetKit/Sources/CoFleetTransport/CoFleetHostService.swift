@@ -1,7 +1,7 @@
 import CoFleetCore
 import Foundation
 
-public actor CoFleetHostService: CoFleetFleetRepository, CoFleetThreadRepository, CoFleetTurnRepository, CoFleetWorkspaceRepository {
+public actor CoFleetHostService: CoFleetFleetRepository, CoFleetThreadRepository, CoFleetTurnRepository, CoFleetHostEventRepository, CoFleetWorkspaceRepository {
     private let client: CoFleetAPIClient
     private var cachedHost: CoFleetHostInfo?
 
@@ -208,9 +208,21 @@ public actor CoFleetHostService: CoFleetFleetRepository, CoFleetThreadRepository
     }
 
     public func createSession(hostID: CoFleetHostID, projectID: String) async throws -> CoFleetSessionSummary {
+        try await createSession(
+            hostID: hostID,
+            projectID: projectID,
+            settings: CoFleetSessionSettings()
+        )
+    }
+
+    public func createSession(
+        hostID: CoFleetHostID,
+        projectID: String,
+        settings: CoFleetSessionSettings
+    ) async throws -> CoFleetSessionSummary {
         let response: SessionEnvelopeDTO = try await client.post(
             "/v1/sessions",
-            body: CreateSessionRequest(projectID: projectID)
+            body: SessionActionRequest(projectID: projectID, settings: settings)
         )
         return response.session.model(hostID: hostID, fallbackProjectID: projectID)
     }
@@ -249,10 +261,14 @@ public actor CoFleetHostService: CoFleetFleetRepository, CoFleetThreadRepository
     }
 
     public func openSessionInCodex(hostID: CoFleetHostID, sessionID: String) async throws {
-        try await requireHost(hostID)
+        // CoFleetAppRepository has already selected this host-scoped service by
+        // `hostID`. Do not add a `/v1/host` discovery request to a latency-critical
+        // desktop-navigation tap; the session endpoint remains authenticated and
+        // the host constructs the fixed codex:// URL itself.
         let response: SessionDesktopOpenDTO = try await client.post(
             "/v1/sessions/\(sessionID.pathComponent)/open-in-codex",
-            body: EmptyRequest()
+            body: EmptyRequest(),
+            timeoutInterval: 8
         )
         guard response.opened, response.sessionID == sessionID else {
             throw CoFleetClientError.invalidResponse
@@ -340,6 +356,27 @@ public actor CoFleetHostService: CoFleetFleetRepository, CoFleetThreadRepository
             let task = Task {
                 do {
                     let decoder = CoFleetTurnEventDecoder()
+                    for try await event in raw {
+                        continuation.yield(try decoder.decode(event))
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public func hostEvents(
+        hostID: CoFleetHostID,
+        afterEventID: String?
+    ) async throws -> AsyncThrowingStream<CoFleetSequencedHostEvent, Error> {
+        let raw = try await client.eventStream(path: "/v1/events", lastEventID: afterEventID)
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let decoder = CoFleetHostEventDecoder(hostID: hostID)
                     for try await event in raw {
                         continuation.yield(try decoder.decode(event))
                     }
@@ -517,10 +554,6 @@ private struct RegisterProjectRequest: Codable, Sendable {
 }
 
 private struct RenameProjectRequest: Codable, Sendable { var name: String }
-
-private struct CreateSessionRequest: Codable, Sendable {
-    var projectID: String
-}
 
 private struct SessionActionRequest: Codable, Sendable {
     var projectID: String
@@ -805,6 +838,7 @@ private struct ProjectDTO: Decodable, Sendable {
     var id: String
     var name: String
     var canonicalPath: String
+    var currentSessionID: String?
     var petID: String?
     var sourceControl: SourceControlDTO?
 
@@ -815,6 +849,7 @@ private struct ProjectDTO: Decodable, Sendable {
             displayName: name,
             canonicalPath: canonicalPath,
             sortIndex: sortIndex,
+            currentSessionID: currentSessionID,
             selectedPetID: petID,
             sourceControl: sourceControl?.model
         )

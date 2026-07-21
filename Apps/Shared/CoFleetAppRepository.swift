@@ -2,7 +2,7 @@ import CoFleetCore
 import CoFleetTransport
 import Foundation
 
-public actor CoFleetAppRepository: CoFleetFleetRepository, CoFleetThreadRepository, CoFleetTurnRepository, CoFleetWorkspaceRepository {
+public actor CoFleetAppRepository: CoFleetFleetRepository, CoFleetThreadRepository, CoFleetTurnRepository, CoFleetHostEventRepository, CoFleetWorkspaceRepository {
     private let tokenVault: any CoFleetTokenVault
     private let defaults: UserDefaults
     private let recordsKey = "CoFleet.hostRecords.v1"
@@ -291,6 +291,18 @@ public actor CoFleetAppRepository: CoFleetFleetRepository, CoFleetThreadReposito
         try await service(for: hostID).createSession(hostID: hostID, projectID: projectID)
     }
 
+    public func createSession(
+        hostID: CoFleetHostID,
+        projectID: String,
+        settings: CoFleetSessionSettings
+    ) async throws -> CoFleetSessionSummary {
+        try await service(for: hostID).createSession(
+            hostID: hostID,
+            projectID: projectID,
+            settings: settings
+        )
+    }
+
     public func resumeSession(hostID: CoFleetHostID, projectID: String, sessionID: String, settings: CoFleetSessionSettings) async throws -> CoFleetSessionSummary {
         try await service(for: hostID).resumeSession(hostID: hostID, projectID: projectID, sessionID: sessionID, settings: settings)
     }
@@ -370,6 +382,16 @@ public actor CoFleetAppRepository: CoFleetFleetRepository, CoFleetThreadReposito
         try await service(for: hostID).events(
             hostID: hostID,
             sessionID: sessionID,
+            afterEventID: afterEventID
+        )
+    }
+
+    public func hostEvents(
+        hostID: CoFleetHostID,
+        afterEventID: String?
+    ) async throws -> AsyncThrowingStream<CoFleetSequencedHostEvent, Error> {
+        try await service(for: hostID).hostEvents(
+            hostID: hostID,
             afterEventID: afterEventID
         )
     }

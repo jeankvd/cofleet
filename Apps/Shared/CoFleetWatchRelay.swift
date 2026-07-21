@@ -1,6 +1,7 @@
 #if os(iOS) || os(watchOS)
 import CoFleetCore
 import CoFleetTransport
+import CoFleetUI
 import Combine
 import Foundation
 import UserNotifications
@@ -49,6 +50,8 @@ final class CoFleetPhoneRelay: NSObject, ObservableObject, WCSessionDelegate {
     private let deliveryStore: CoFleetWatchDeliveryStore
     private let snapshotStore: CoFleetWatchSnapshotStore
     private var processing: Set<UUID> = []
+    private var scheduledSnapshotTask: Task<Void, Never>?
+    private var latestSnapshot: CoFleetWatchSnapshot?
     private var latestSnapshotData: Data?
     private var latestDeliveryData: Data?
 
@@ -67,17 +70,55 @@ final class CoFleetPhoneRelay: NSObject, ObservableObject, WCSessionDelegate {
         connectivitySession?.activate()
     }
 
+    deinit {
+        scheduledSnapshotTask?.cancel()
+    }
+
     func resumeAndPublish() async {
+        if latestSnapshot == nil {
+            let restored = await snapshotStore.load()
+            if !restored.projects.isEmpty {
+                latestSnapshot = restored
+                latestSnapshotData = try? CoFleetWatchRelayCodec.encode(.init(snapshot: restored))
+            }
+        }
         await recoverPendingDeliveries()
         await publishSnapshot()
     }
 
+    /// Coalesces bursty provider events into one credential-free Watch snapshot. This path only
+    /// reads the controller's event-projected caches; it never polls a host or reloads a catalog.
+    func scheduleProjectedSnapshotPublish() {
+        scheduledSnapshotTask?.cancel()
+        scheduledSnapshotTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled, let self else { return }
+            await self.publishProjectedSnapshot()
+            self.scheduledSnapshotTask = nil
+        }
+    }
+
     func publishSnapshot() async {
+        scheduledSnapshotTask?.cancel()
+        scheduledSnapshotTask = nil
         if controller.fleetStore.projects.isEmpty {
             await controller.fleetStore.refresh()
         }
         let projects = Array(controller.fleetStore.visibleProjects.prefix(CoFleetWatchRelayCodec.maximumProjects))
         let hosts = Dictionary(uniqueKeysWithValues: controller.fleetStore.hosts.map { ($0.id, $0) })
+        let cachedPreviews = controller.threadStore.latestPreviewByProjectID
+        let selectedProjectID = controller.fleetStore.selectedProjectID
+        let selectedSessionID = controller.threadStore.selectedSessionID
+        let previousByID = Dictionary(uniqueKeysWithValues: (latestSnapshot?.projects ?? []).map { ($0.id, $0) })
+        let activityByProjectID = Dictionary(uniqueKeysWithValues: projects.compactMap { project in
+            controller.fleetStore.activity(for: project.id).map { (project.id, $0) }
+        })
+        let actions = Dictionary(uniqueKeysWithValues: projects.map { project in
+            let action = activityByProjectID[project.id]
+                .map { CoFleetWatchPresentationPolicy.action(for: $0.activity) }
+                ?? CoFleetWatchPresentationPolicy.action(for: project.state)
+            return (project.id, action)
+        })
         let repository = controller.repository
         let petPreviews = await loadPetPreviews(for: projects, repository: repository)
 
@@ -87,6 +128,12 @@ final class CoFleetPhoneRelay: NSObject, ObservableObject, WCSessionDelegate {
         ) { group in
             for project in projects {
                 group.addTask {
+                    let previous = previousByID[project.id]
+                    let cachedPreview = cachedPreviews[project.id]
+                    let preferredSessionID = (project.id == selectedProjectID ? selectedSessionID : nil)
+                        ?? activityByProjectID[project.id]?.sessionID
+                        ?? project.currentSessionID
+                        ?? cachedPreview?.session.id
                     let page = try? await repository.fetchSessions(
                         hostID: project.hostID,
                         projectID: project.id,
@@ -94,26 +141,37 @@ final class CoFleetPhoneRelay: NSObject, ObservableObject, WCSessionDelegate {
                         limit: 5,
                         archived: false
                     )
-                    let session = project.currentSessionID.flatMap { currentID in
-                        page?.items.first { $0.id == currentID }
-                    } ?? page?.items.first
-                    let todos = (try? await repository.fetchTodos(
+                    let session = preferredSessionID.flatMap { sessionID in
+                        page?.items.first { $0.id == sessionID }
+                            ?? (cachedPreview?.session.id == sessionID ? cachedPreview?.session : nil)
+                    } ?? cachedPreview?.session ?? page?.items.first
+                    let sessionID = preferredSessionID ?? session?.id
+                    let cachedLatestMessage: String? = sessionID.flatMap { sessionID in
+                        guard cachedPreview?.session.id == sessionID else { return nil }
+                        return cachedPreview?.messages.last(where: { $0.kind == .assistantMessage })?.text
+                            ?? cachedPreview?.session.preview
+                    }
+                    let todos = try? await repository.fetchTodos(
                         hostID: project.hostID,
                         projectID: project.id
-                    )) ?? []
-                    let pendingTodos = todos.filter { !$0.isCompleted }
+                    )
+                    let pendingTodos = todos?.filter { !$0.isCompleted }
                     return CoFleetWatchProjectSnapshot(
                         id: project.id,
                         hostID: project.hostID,
-                        sessionID: session?.id ?? project.currentSessionID,
+                        sessionID: sessionID,
                         name: project.displayName,
                         hostReachability: hosts[project.hostID]?.reachability ?? .unknown,
-                        action: Self.action(for: project.state),
-                        latestMessage: Self.truncatedPreview(session?.preview, maximumBytes: 1_024),
-                        pendingTodoCount: pendingTodos.count,
-                        nextPendingTodoID: pendingTodos.first?.id,
+                        action: actions[project.id] ?? .idle,
+                        latestMessage: Self.truncatedPreview(
+                            cachedLatestMessage ?? session?.preview ?? previous?.latestMessage,
+                            maximumBytes: 1_024
+                        ),
+                        pendingTodoCount: pendingTodos?.count ?? previous?.pendingTodoCount ?? 0,
+                        nextPendingTodoID: pendingTodos?.first?.id ?? previous?.nextPendingTodoID,
                         selectedPetID: project.selectedPetID,
-                        petPreview: petPreviews[project.id],
+                        petPreview: petPreviews[project.id]
+                            ?? (previous?.selectedPetID == project.selectedPetID ? previous?.petPreview : nil),
                         sourceControl: project.sourceControl
                     )
                 }
@@ -128,9 +186,84 @@ final class CoFleetPhoneRelay: NSObject, ObservableObject, WCSessionDelegate {
             projects: projectSnapshots,
             focusedProjectID: controller.fleetStore.selectedProjectID
         )
+        await publish(snapshot)
+    }
+
+    private func publishProjectedSnapshot() async {
+        guard let latestSnapshot else {
+            await publishSnapshot()
+            return
+        }
+
+        let projects = Array(controller.fleetStore.visibleProjects.prefix(CoFleetWatchRelayCodec.maximumProjects))
+        let hosts = Dictionary(uniqueKeysWithValues: controller.fleetStore.hosts.map { ($0.id, $0) })
+        let cachedPreviews = controller.threadStore.latestPreviewByProjectID
+        let selectedProjectID = controller.fleetStore.selectedProjectID
+        let selectedSessionID = controller.threadStore.selectedSessionID
+        let previousByID = Dictionary(uniqueKeysWithValues: latestSnapshot.projects.map { ($0.id, $0) })
+        let activityByProjectID = Dictionary(uniqueKeysWithValues: projects.compactMap { project in
+            controller.fleetStore.activity(for: project.id).map { (project.id, $0) }
+        })
+
+        let projectedProjects = projects.map { project in
+            let previous = previousByID[project.id]
+            let cachedPreview = cachedPreviews[project.id]
+            let sessionID = (project.id == selectedProjectID ? selectedSessionID : nil)
+                ?? activityByProjectID[project.id]?.sessionID
+                ?? project.currentSessionID
+                ?? cachedPreview?.session.id
+                ?? previous?.sessionID
+            let cachedLatestMessage: String? = sessionID.flatMap { sessionID in
+                guard cachedPreview?.session.id == sessionID else { return nil }
+                return cachedPreview?.messages.last(where: { $0.kind == .assistantMessage })?.text
+                    ?? cachedPreview?.session.preview
+            }
+            let action = activityByProjectID[project.id]
+                .map { CoFleetWatchPresentationPolicy.action(for: $0.activity) }
+                ?? CoFleetWatchPresentationPolicy.action(for: project.state)
+            // Streaming text can change for every token. Watch only needs the meaningful action
+            // transitions; publish the canonical message once the assistant reply completes.
+            let latestMessage = action == .replied || previous == nil
+                ? (cachedLatestMessage ?? previous?.latestMessage)
+                : previous?.latestMessage
+            return CoFleetWatchProjectSnapshot(
+                id: project.id,
+                hostID: project.hostID,
+                sessionID: sessionID,
+                name: project.displayName,
+                hostReachability: hosts[project.hostID]?.reachability ?? .unknown,
+                action: action,
+                latestMessage: Self.truncatedPreview(
+                    latestMessage,
+                    maximumBytes: 1_024
+                ),
+                pendingTodoCount: previous?.pendingTodoCount ?? 0,
+                nextPendingTodoID: previous?.nextPendingTodoID,
+                selectedPetID: project.selectedPetID,
+                petPreview: previous?.selectedPetID == project.selectedPetID ? previous?.petPreview : nil,
+                sourceControl: project.sourceControl
+            )
+        }
+
+        await publish(CoFleetWatchSnapshot(
+            projects: projectedProjects,
+            focusedProjectID: selectedProjectID,
+            mode: latestSnapshot.mode
+        ))
+    }
+
+    private func publish(_ candidate: CoFleetWatchSnapshot) async {
+        guard CoFleetWatchPresentationPolicy.snapshotContentChanged(
+            from: latestSnapshot,
+            to: candidate
+        ) else { return }
+
+        var snapshot = candidate
+        snapshot.generatedAt = .now
         do {
             try await snapshotStore.save(snapshot)
             let data = try CoFleetWatchRelayCodec.encode(.init(snapshot: snapshot))
+            latestSnapshot = snapshot
             latestSnapshotData = data
             try updateApplicationContext()
             WidgetCenter.shared.reloadAllTimelines()
@@ -202,7 +335,9 @@ final class CoFleetPhoneRelay: NSObject, ObservableObject, WCSessionDelegate {
             await publish(delivery)
         }
         processing.remove(request.id)
-        await publishSnapshot()
+        if request.kind == .toggleTodo {
+            await publishSnapshot()
+        }
     }
 
     private func routeTurn(
@@ -327,7 +462,6 @@ final class CoFleetPhoneRelay: NSObject, ObservableObject, WCSessionDelegate {
         try? await deliveryStore.upsert(recovered)
         processing.remove(delivery.id)
         await publish(recovered)
-        await publishSnapshot()
     }
 
     private func resolvedProject(for request: CoFleetWatchRequest) async throws -> CoFleetProject {
@@ -435,9 +569,35 @@ final class CoFleetPhoneRelay: NSObject, ObservableObject, WCSessionDelegate {
                 )
             }
             try updateApplicationContext()
+            await publishDeliverySnapshot(delivery)
         } catch {
             lastErrorMessage = error.localizedDescription
         }
+    }
+
+    private func publishDeliverySnapshot(_ delivery: CoFleetWatchDelivery) async {
+        guard var snapshot = latestSnapshot,
+              let index = snapshot.projects.firstIndex(where: { $0.id == delivery.projectID }) else {
+            return
+        }
+        if let sessionID = delivery.sessionID {
+            snapshot.projects[index].sessionID = sessionID
+        }
+        switch delivery.state {
+        case .pending, .running:
+            snapshot.projects[index].action = .working
+        case .completed, .notified:
+            snapshot.projects[index].action = .replied
+            if let responsePreview = delivery.responsePreview {
+                snapshot.projects[index].latestMessage = responsePreview
+            }
+        case .failed:
+            snapshot.projects[index].action = .idle
+            if let errorMessage = delivery.errorMessage {
+                snapshot.projects[index].latestMessage = errorMessage
+            }
+        }
+        await publish(snapshot)
     }
 
     private func updateApplicationContext() throws {
@@ -446,17 +606,6 @@ final class CoFleetPhoneRelay: NSObject, ObservableObject, WCSessionDelegate {
         if let latestSnapshotData { context[CoFleetWatchConnectivityKeys.snapshot] = latestSnapshotData }
         if let latestDeliveryData { context[CoFleetWatchConnectivityKeys.delivery] = latestDeliveryData }
         if !context.isEmpty { try connectivitySession.updateApplicationContext(context) }
-    }
-
-    private nonisolated static func action(for state: CoFleetProjectState) -> CoFleetActionIndicator {
-        switch state {
-        case .idle: .idle
-        case .working: .working
-        case .waitingForApproval: .approvalNeeded
-        case .waitingForAnswer: .questionAsked
-        case .replied: .replied
-        case .unavailable: .idle
-        }
     }
 
     private nonisolated static func truncatedPreview(_ value: String?) -> String? {
@@ -638,6 +787,7 @@ final class CoFleetWatchRelay: NSObject, ObservableObject, WCSessionDelegate {
     private let deliveryStore: CoFleetWatchDeliveryStore
     private let snapshotStore: CoFleetWatchSnapshotStore
     private var notifiedDeliveryIDs: Set<UUID> = []
+    private var notifiedReplySignatures: Set<String> = []
 
     override init() {
         connectivitySession = WCSession.isSupported() ? .default : nil
@@ -715,7 +865,26 @@ final class CoFleetWatchRelay: NSObject, ObservableObject, WCSessionDelegate {
         let deliveries = await deliveryStore.all()
         notifiedDeliveryIDs = Set(deliveries.filter { $0.state == .notified }.map(\.id))
         for delivery in deliveries.reversed() {
-            apply(delivery, notify: delivery.state == .completed && !notifiedDeliveryIDs.contains(delivery.id))
+            let needsNotification = delivery.state == .completed
+                && !notifiedDeliveryIDs.contains(delivery.id)
+            if CoFleetWatchPresentationPolicy.shouldReapplyDelivery(
+                state: delivery.state,
+                deliveryUpdatedAt: delivery.updatedAt,
+                snapshotGeneratedAt: snapshot.generatedAt
+            ) {
+                apply(delivery, notify: needsNotification)
+            } else if needsNotification {
+                notifyCompletion(delivery)
+            }
+        }
+        for project in snapshot.projects where project.action == .replied {
+            if let signature = replySignature(
+                projectID: project.id,
+                sessionID: project.sessionID,
+                preview: project.latestMessage
+            ) {
+                notifiedReplySignatures.insert(signature)
+            }
         }
         requestNotificationAuthorization()
     }
@@ -726,11 +895,17 @@ final class CoFleetWatchRelay: NSObject, ObservableObject, WCSessionDelegate {
             switch payload.kind {
             case .snapshot:
                 guard let received = payload.snapshot else { return }
+                let previousSnapshot = snapshot
                 snapshot = received
                 for delivery in (await deliveryStore.all()).reversed()
-                    where delivery.state == .completed || delivery.state == .notified {
+                    where CoFleetWatchPresentationPolicy.shouldReapplyDelivery(
+                        state: delivery.state,
+                        deliveryUpdatedAt: delivery.updatedAt,
+                        snapshotGeneratedAt: received.generatedAt
+                    ) {
                     apply(delivery, notify: false)
                 }
+                notifySnapshotCompletions(previous: previousSnapshot, current: snapshot)
                 try await snapshotStore.save(snapshot)
                 WidgetCenter.shared.reloadAllTimelines()
             case .delivery:
@@ -750,10 +925,16 @@ final class CoFleetWatchRelay: NSObject, ObservableObject, WCSessionDelegate {
     private func apply(_ delivery: CoFleetWatchDelivery, notify: Bool) {
         switch delivery.state {
         case .pending, .running:
-            updateProject(projectID: delivery.projectID, action: .working, latestMessage: nil)
+            updateProject(
+                projectID: delivery.projectID,
+                sessionID: delivery.sessionID,
+                action: .working,
+                latestMessage: nil
+            )
         case .completed, .notified:
             updateProject(
                 projectID: delivery.projectID,
+                sessionID: delivery.sessionID,
                 action: .replied,
                 latestMessage: delivery.responsePreview
             )
@@ -761,6 +942,7 @@ final class CoFleetWatchRelay: NSObject, ObservableObject, WCSessionDelegate {
         case .failed:
             updateProject(
                 projectID: delivery.projectID,
+                sessionID: delivery.sessionID,
                 action: .idle,
                 latestMessage: delivery.errorMessage
             )
@@ -769,10 +951,12 @@ final class CoFleetWatchRelay: NSObject, ObservableObject, WCSessionDelegate {
 
     private func updateProject(
         projectID: String,
+        sessionID: String? = nil,
         action: CoFleetActionIndicator,
         latestMessage: String?
     ) {
         guard let index = snapshot.projects.firstIndex(where: { $0.id == projectID }) else { return }
+        if let sessionID { snapshot.projects[index].sessionID = sessionID }
         snapshot.projects[index].action = action
         if let latestMessage { snapshot.projects[index].latestMessage = latestMessage }
         snapshot.generatedAt = .now
@@ -791,23 +975,79 @@ final class CoFleetWatchRelay: NSObject, ObservableObject, WCSessionDelegate {
 
     private func notifyCompletion(_ delivery: CoFleetWatchDelivery) {
         guard notifiedDeliveryIDs.insert(delivery.id).inserted else { return }
+        let shouldAlert = replySignature(
+            projectID: delivery.projectID,
+            sessionID: delivery.sessionID,
+            preview: delivery.responsePreview
+        ).map { notifiedReplySignatures.insert($0).inserted } ?? true
+        if shouldAlert {
+            notifyReply(
+                title: "CoFleet reply",
+                body: delivery.responsePreview ?? "Codex finished the turn.",
+                identifier: "cofleet-watch-\(delivery.id.uuidString)"
+            )
+        }
+        markNotified(delivery)
+    }
+
+    private func notifySnapshotCompletions(
+        previous: CoFleetWatchSnapshot,
+        current: CoFleetWatchSnapshot
+    ) {
+        let previousByID = Dictionary(uniqueKeysWithValues: previous.projects.map { ($0.id, $0) })
+        for project in current.projects where project.action == .replied {
+            guard CoFleetWatchPresentationPolicy.shouldNotifyReply(
+                      previous: previousByID[project.id],
+                      current: project
+                  ),
+                  let preview = project.latestMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let signature = replySignature(
+                      projectID: project.id,
+                      sessionID: project.sessionID,
+                      preview: preview
+                  ),
+                  notifiedReplySignatures.insert(signature).inserted else { continue }
+            notifyReply(
+                title: project.name,
+                body: preview,
+                identifier: "cofleet-watch-reply-\(project.id)-\(project.sessionID ?? "latest")"
+            )
+        }
+    }
+
+    private func notifyReply(title: String, body: String, identifier: String) {
         WKInterfaceDevice.current().play(.notification)
         let content = UNMutableNotificationContent()
-        content.title = "CoFleet reply"
-        content.body = delivery.responsePreview ?? "Codex finished the turn."
+        content.title = title
+        content.body = body
         content.sound = .default
         let request = UNNotificationRequest(
-            identifier: "cofleet-watch-\(delivery.id.uuidString)",
+            identifier: identifier,
             content: content,
             trigger: nil
         )
         Task {
             try? await UNUserNotificationCenter.current().add(request)
+        }
+    }
+
+    private func markNotified(_ delivery: CoFleetWatchDelivery) {
+        Task {
             var notified = delivery
             notified.state = .notified
             notified.updatedAt = .now
             try? await deliveryStore.upsert(notified)
         }
+    }
+
+    private func replySignature(
+        projectID: String,
+        sessionID: String?,
+        preview: String?
+    ) -> String? {
+        guard let preview = preview?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !preview.isEmpty else { return nil }
+        return "\(projectID)\u{1f}\(sessionID ?? "")\u{1f}\(preview)"
     }
 
     nonisolated func session(

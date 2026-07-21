@@ -12,7 +12,27 @@ from .errors import APIError
 from .util import canonical_json, new_id, now, secure_equal, token_hash
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+SESSION_CATALOG_CACHE_MAX_ITEMS = 5
+SESSION_CATALOG_CACHE_MAX_BYTES = 128 * 1024
+SESSION_CATALOG_SESSION_KEYS = frozenset(
+    (
+        "id",
+        "hostID",
+        "projectID",
+        "title",
+        "cwd",
+        "preview",
+        "createdAt",
+        "updatedAt",
+        "archived",
+        "model",
+        "accessLevel",
+        "reasoningEffort",
+        "serviceTier",
+        "provider",
+    )
+)
 
 
 class Database:
@@ -120,6 +140,11 @@ class Database:
                     service_tier TEXT,
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE session_catalog_cache (
+                    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                );
                 CREATE TABLE notes (
                     id TEXT PRIMARY KEY,
                     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -196,17 +221,45 @@ class Database:
                 "INSERT INTO schema_metadata(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
-        elif int(row["value"]) == 1:
-            self._connection.execute(
-                "ALTER TABLE interactions ADD COLUMN process_generation TEXT NOT NULL "
-                "DEFAULT 'legacy-process'"
-            )
-            self._connection.execute(
-                "UPDATE schema_metadata SET value = ? WHERE key = 'schema_version'",
-                (str(SCHEMA_VERSION),),
-            )
-        elif int(row["value"]) != SCHEMA_VERSION:
-            raise RuntimeError("unsupported cofleet-host database schema")
+        else:
+            version = int(row["value"])
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if version == 1:
+                    interaction_columns = {
+                        str(item["name"])
+                        for item in self._connection.execute(
+                            "PRAGMA table_info(interactions)"
+                        ).fetchall()
+                    }
+                    if "process_generation" not in interaction_columns:
+                        self._connection.execute(
+                            "ALTER TABLE interactions ADD COLUMN process_generation TEXT NOT NULL "
+                            "DEFAULT 'legacy-process'"
+                        )
+                    version = 2
+                    self._connection.execute(
+                        "UPDATE schema_metadata SET value = ? WHERE key = 'schema_version'",
+                        (str(version),),
+                    )
+                if version == 2:
+                    self._connection.execute(
+                        "CREATE TABLE IF NOT EXISTS session_catalog_cache ("
+                        "project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE, "
+                        "payload_json TEXT NOT NULL, updated_at REAL NOT NULL)"
+                    )
+                    version = 3
+                    self._connection.execute(
+                        "UPDATE schema_metadata SET value = ? WHERE key = 'schema_version'",
+                        (str(version),),
+                    )
+                if version != SCHEMA_VERSION:
+                    raise RuntimeError("unsupported cofleet-host database schema")
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
 
     def host_id(self) -> str:
         with self.transaction() as connection:
@@ -401,6 +454,114 @@ class Database:
         with self.transaction() as connection:
             connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         return project
+
+    # First-page session catalog cache ---------------------------------------
+
+    @staticmethod
+    def _valid_session_catalog_payload(value: Any) -> bool:
+        if not isinstance(value, dict) or set(value.keys()) != {"sessions", "nextCursor"}:
+            return False
+        sessions = value.get("sessions")
+        cursor = value.get("nextCursor")
+        if not isinstance(sessions, list) or len(sessions) > SESSION_CATALOG_CACHE_MAX_ITEMS:
+            return False
+        if cursor is not None and (not isinstance(cursor, str) or len(cursor) > 4_096):
+            return False
+        for session in sessions:
+            if not isinstance(session, dict):
+                return False
+            if not set(session.keys()).issubset(SESSION_CATALOG_SESSION_KEYS):
+                return False
+            session_id = session.get("id")
+            if not isinstance(session_id, str) or not session_id or len(session_id) > 256:
+                return False
+            if not isinstance(session.get("hostID"), str):
+                return False
+            if not isinstance(session.get("projectID"), str):
+                return False
+            if not isinstance(session.get("title"), str):
+                return False
+            if session.get("provider") != "codex" or not isinstance(session.get("archived"), bool):
+                return False
+            for key, item in session.items():
+                if key == "archived":
+                    continue
+                if item is not None and not isinstance(item, (str, int, float, bool)):
+                    return False
+        return True
+
+    def get_session_catalog_cache(self, project_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT payload_json FROM session_catalog_cache WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        encoded = str(row["payload_json"])
+        if len(encoded.encode("utf-8", errors="replace")) > SESSION_CATALOG_CACHE_MAX_BYTES:
+            return None
+        try:
+            payload = json.loads(encoded)
+        except (TypeError, ValueError):
+            return None
+        return payload if self._valid_session_catalog_payload(payload) else None
+
+    def put_session_catalog_cache(
+        self, project_id: str, payload: Dict[str, Any]
+    ) -> bool:
+        if not self._valid_session_catalog_payload(payload):
+            raise ValueError("invalid session catalog cache payload")
+        encoded = canonical_json(payload)
+        if len(encoded.encode("utf-8")) > SESSION_CATALOG_CACHE_MAX_BYTES:
+            raise ValueError("session catalog cache payload is too large")
+        timestamp = now()
+        with self.transaction() as connection:
+            # Enforce the foreign key before reporting an unchanged write.
+            if connection.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+            ).fetchone() is None:
+                raise APIError(404, "project_not_found", "The project was not found.")
+            existing = connection.execute(
+                "SELECT payload_json FROM session_catalog_cache WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+            if existing is not None and str(existing["payload_json"]) == encoded:
+                return False
+            connection.execute(
+                "INSERT INTO session_catalog_cache(project_id, payload_json, updated_at) "
+                "VALUES(?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET "
+                "payload_json = excluded.payload_json, updated_at = excluded.updated_at",
+                (project_id, encoded, timestamp),
+            )
+        return True
+
+    def cached_current_session_id(self, project_id: str) -> Optional[str]:
+        payload = self.get_session_catalog_cache(project_id)
+        if payload is None or not payload["sessions"]:
+            return None
+        session_id = payload["sessions"][0].get("id")
+        return session_id if isinstance(session_id, str) and session_id else None
+
+    def cached_project_ids_for_session(self, session_id: str) -> List[str]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT project_id, payload_json FROM session_catalog_cache"
+            ).fetchall()
+        project_ids: List[str] = []
+        for row in rows:
+            encoded = str(row["payload_json"])
+            if len(encoded.encode("utf-8", errors="replace")) > SESSION_CATALOG_CACHE_MAX_BYTES:
+                continue
+            try:
+                payload = json.loads(encoded)
+            except (TypeError, ValueError):
+                continue
+            if not self._valid_session_catalog_payload(payload):
+                continue
+            if any(item.get("id") == session_id for item in payload["sessions"]):
+                project_ids.append(str(row["project_id"]))
+        return project_ids
 
     @staticmethod
     def _project(row: sqlite3.Row) -> Dict[str, Any]:

@@ -3,6 +3,9 @@ import SwiftUI
 
 #if !os(watchOS)
 
+/// Keeps the real Progress workspace visible while the selected project's
+/// canonical Codex conversation remains available beside it on macOS or below
+/// it on iPhone and iPad.
 public struct CoFleetActiveView: View {
     @Bindable private var fleetStore: FleetStore
     @Bindable private var threadStore: ThreadStore
@@ -11,6 +14,8 @@ public struct CoFleetActiveView: View {
     @Binding private var settings: CoFleetSessionSettings
     private let models: [CoFleetModelInfo]
     private let localHostID: CoFleetHostID?
+    private let isVisible: Bool
+    private let onHatchPet: (@MainActor (CoFleetProject) async throws -> Void)?
 
     public init(
         fleetStore: FleetStore,
@@ -19,7 +24,9 @@ public struct CoFleetActiveView: View {
         workspaceStore: WorkspaceStore,
         settings: Binding<CoFleetSessionSettings>,
         models: [CoFleetModelInfo],
-        localHostID: CoFleetHostID? = nil
+        localHostID: CoFleetHostID? = nil,
+        isVisible: Bool = true,
+        onHatchPet: (@MainActor (CoFleetProject) async throws -> Void)? = nil
     ) {
         self.fleetStore = fleetStore
         self.threadStore = threadStore
@@ -28,80 +35,52 @@ public struct CoFleetActiveView: View {
         _settings = settings
         self.models = models
         self.localHostID = localHostID
+        self.isVisible = isVisible
+        self.onHatchPet = onHatchPet
     }
 
     public var body: some View {
-        GeometryReader { proxy in
-            if CoFleetResponsivePolicy.activeUsesSideBySide(availableWidth: proxy.size.width) {
-                #if os(macOS)
-                HSplitView {
-                    progressRail
-                        .frame(minWidth: 340, idealWidth: proxy.size.width * 0.42)
-                    agentBay
-                        .frame(minWidth: 420)
-                }
-                #else
-                HStack(spacing: 0) {
-                    progressRail
-                        .frame(width: proxy.size.width * 0.42)
-                    Divider()
-                    agentBay
-                }
-                #endif
-            } else {
-                VStack(spacing: 0) {
-                    progressRail
-                        .frame(height: min(300, proxy.size.height * 0.36))
-                    Divider()
-                    agentBay
-                }
+#if os(macOS)
+        HSplitView {
+            progress
+                .frame(minWidth: 340, idealWidth: 560, maxWidth: 720)
+
+            agentBay
+                .frame(minWidth: 420)
+        }
+        .accessibilityIdentifier("cofleet.active.workspace")
+#else
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                progress
+                    .frame(height: CoFleetActiveLayoutPolicy.progressHeight(
+                        availableHeight: geometry.size.height
+                    ))
+
+                Divider().opacity(0.45)
+
+                agentBay
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(CoFleetTheme.background)
+        .accessibilityIdentifier("cofleet.active.workspace")
+#endif
     }
 
-    private var progressRail: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(fleetStore.visibleProjects) { project in
-                    let host = fleetStore.hosts.first { $0.id == project.hostID }
-                    Button {
-                        fleetStore.selectedProjectID = project.id
-                    } label: {
-                        HStack(spacing: 10) {
-                            CoFleetPetPlaceholder(name: project.displayName, size: 46)
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Text(project.displayName).font(.headline)
-                                    Spacer()
-                                    CoFleetStatusIndicators(
-                                        reachability: host?.reachability ?? .unknown,
-                                        action: project.state.actionIndicator,
-                                        sourceControl: project.sourceControl
-                                    )
-                                }
-                                if fleetStore.selectedProjectID == project.id {
-                                    Text(workspaceStore.noteDraft.isEmpty ? "No notes" : workspaceStore.noteDraft)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(3)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            }
-                        }
-                        .padding(12)
-                        .background(
-                            fleetStore.selectedProjectID == project.id
-                                ? CoFleetTheme.violet.opacity(0.16)
-                                : CoFleetTheme.surface,
-                            in: RoundedRectangle(cornerRadius: 15)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(10)
-        }
+    private var progress: some View {
+        CoFleetProgressView(
+            fleetStore: fleetStore,
+            threadStore: threadStore,
+            turnStore: turnStore,
+            workspaceStore: workspaceStore,
+            settings: $settings,
+            localHostID: localHostID,
+            isVisible: isVisible,
+            // Progress already selects the project. Remaining in Active lets the
+            // app controller route the matching task into the adjacent Agent Bay.
+            onOpenProject: { _ in },
+            onHatchPet: onHatchPet
+        )
     }
 
     private var agentBay: some View {
@@ -111,8 +90,19 @@ public struct CoFleetActiveView: View {
             settings: $settings,
             models: models,
             fleetStore: fleetStore,
-            localHostID: localHostID
+            workspaceStore: workspaceStore,
+            localHostID: localHostID,
+            onHatchPet: onHatchPet
         )
+    }
+}
+
+enum CoFleetActiveLayoutPolicy {
+    static func progressHeight(availableHeight: CGFloat) -> CGFloat {
+        // Fresh Codex cards include two message bubbles. Reserving roughly half
+        // the phone workspace lets one complete card remain visible while the
+        // lower conversation still keeps a useful reading/composer area.
+        min(max(availableHeight * 0.52, 340), 420)
     }
 }
 #endif

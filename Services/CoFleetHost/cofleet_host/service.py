@@ -17,10 +17,11 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 from urllib.parse import quote
 
 from . import __version__
+from .activity import CodexFilesystemActivityWatcher
 from .codex import CodexAppServerSupervisor
 from .config import HostConfig
 from .database import Database
-from .errors import APIError, CodexUnavailable
+from .errors import APIError, CodexRPCError, CodexUnavailable
 from .events import EventBroker
 from .paths import canonical_directory, create_directory, list_directories
 from .pets import PetManager
@@ -73,6 +74,21 @@ TURN_SANDBOX_POLICIES: Dict[str, Dict[str, Any]] = {
 }
 
 
+CURRENT_CODEX_SOURCE_KINDS = [
+    "cli",
+    "vscode",
+    "exec",
+    "appServer",
+    "subAgent",
+    "subAgentReview",
+    "subAgentCompact",
+    "subAgentThreadSpawn",
+    "subAgentOther",
+    "unknown",
+]
+LEGACY_CODEX_SOURCE_KINDS = ["cli", "vscode", "appServer", "unknown"]
+
+
 @dataclass
 class ServiceResponse:
     status: int = 200
@@ -102,6 +118,7 @@ class CoFleetHostService:
         invalidate_pending_interactions_on_start: bool = True,
         private_serve_verifier=verify_private_serve,
         desktop_opener=None,
+        filesystem_watcher_factory=None,
     ) -> None:
         self.config = config.validate()
         self.private_serve_status = None
@@ -140,6 +157,31 @@ class CoFleetHostService:
                     {"count": len(stale_interactions), "reason": "host_restart"},
                 )
         self._closed = threading.Event()
+        self._session_catalog_condition = threading.Condition()
+        self._session_catalog_lifecycle_lock = threading.Lock()
+        self._session_catalog_refreshing: set[str] = set()
+        self._session_catalog_refresh_again: set[str] = set()
+        self._session_catalog_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="cofleet-session-catalog"
+        )
+        self._background_maintenance_enabled = start_maintenance
+        self._codex_source_kinds = list(CURRENT_CODEX_SOURCE_KINDS)
+        self._codex_source_kinds_lock = threading.Lock()
+        self._external_activity_condition = threading.Condition()
+        self._external_activity_deadlines: Dict[str, float] = {}
+        self._external_activity_attempts: Dict[str, int] = {}
+        self._external_activity_inflight: set[str] = set()
+        self._external_activity_states: Dict[Tuple[str, str], Tuple[str, Optional[str], Optional[str]]] = {}
+        self._external_turn_fingerprints: Dict[Tuple[str, str], str] = {}
+        self._external_item_fingerprints: Dict[Tuple[str, str, str], str] = {}
+        self._native_activity_at: Dict[str, float] = {}
+        self._external_activity_last_seen: Dict[str, float] = {}
+        self._external_stale_followups: Dict[str, int] = {}
+        self._external_activity_executor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="cofleet-desktop-reconcile"
+        )
+        self._external_activity_thread: Optional[threading.Thread] = None
+        self._filesystem_activity_watcher = None
         self._pairing_attempts: List[float] = []
         self._pairing_lock = threading.Lock()
         self._interaction_lock = threading.Lock()
@@ -149,12 +191,119 @@ class CoFleetHostService:
         self._source_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
         self._source_lock = threading.Lock()
         if start_maintenance:
+            self._external_activity_thread = threading.Thread(
+                target=self._external_activity_loop,
+                name="cofleet-desktop-activity-debounce",
+                daemon=True,
+            )
+            self._external_activity_thread.start()
+            watcher_factory = filesystem_watcher_factory or CodexFilesystemActivityWatcher
+            try:
+                self._filesystem_activity_watcher = watcher_factory(
+                    (
+                        self.config.codex_state_path / "sessions",
+                        self.config.codex_state_path / "archived_sessions",
+                    ),
+                    self._on_codex_filesystem_activity,
+                )
+            except Exception:
+                # Live app-server events remain fully functional when a host OS
+                # cannot grant filesystem notification access.
+                self._filesystem_activity_watcher = None
+            if self._filesystem_activity_watcher is not None:
+                for project in self.database.list_projects():
+                    cached = self.database.get_session_catalog_cache(project["id"])
+                    if cached is not None:
+                        for session in cached["sessions"]:
+                            self._track_session_id(session.get("id"))
+            # Start and warm Codex before an iPhone/Watch asks for its first catalog.
+            # `thread/list` is metadata-only and primes the app-server's task index;
+            # failures are intentionally silent because normal requests retain their
+            # structured retry/error behavior.
+            threading.Thread(target=self._warm_codex_catalog, daemon=True).start()
             threading.Thread(target=self._maintenance_loop, daemon=True).start()
 
     def close(self) -> None:
         self._closed.set()
+        watcher = self._filesystem_activity_watcher
+        if watcher is not None:
+            watcher.close()
+        with self._external_activity_condition:
+            self._external_activity_condition.notify_all()
+        activity_thread = self._external_activity_thread
+        if activity_thread is not None and activity_thread is not threading.current_thread():
+            activity_thread.join(timeout=2.0)
+        with self._session_catalog_condition:
+            self._session_catalog_condition.notify_all()
         self.codex.close()
-        self.database.close()
+        self._external_activity_executor.shutdown(wait=True, cancel_futures=True)
+        self._session_catalog_executor.shutdown(wait=False, cancel_futures=True)
+        # A refresh never holds this lock while waiting for Codex. Closing the
+        # supervisor first wakes real app-server requests, while the lock keeps
+        # a completed daemon refresh from racing SQLite shutdown.
+        with self._session_catalog_lifecycle_lock:
+            self.database.close()
+
+    def _warm_codex_catalog(self) -> None:
+        # Warm each registered project into durable storage. Unlike the old
+        # one-item global probe, these results are retained and immediately
+        # useful to a newly launched Apple client.
+        try:
+            projects = self.database.list_projects()
+        except Exception:
+            return
+        for project in projects:
+            self._schedule_session_catalog_refresh(project["id"])
+
+    def _schedule_session_catalog_refresh(
+        self, project_id: str, force_followup: bool = False
+    ) -> bool:
+        if self._closed.is_set():
+            return False
+        with self._session_catalog_condition:
+            if project_id in self._session_catalog_refreshing:
+                if force_followup:
+                    self._session_catalog_refresh_again.add(project_id)
+                return False
+            self._session_catalog_refreshing.add(project_id)
+        try:
+            self._session_catalog_executor.submit(
+                self._session_catalog_refresh_worker, project_id
+            )
+        except Exception:
+            with self._session_catalog_condition:
+                self._session_catalog_refreshing.discard(project_id)
+                self._session_catalog_condition.notify_all()
+            return False
+        return True
+
+    def _schedule_session_catalog_after_mutation(self, project_id: str) -> bool:
+        if not self._background_maintenance_enabled:
+            return False
+        return self._schedule_session_catalog_refresh(project_id, force_followup=True)
+
+    def _session_catalog_refresh_worker(self, project_id: str) -> None:
+        while not self._closed.is_set():
+            try:
+                self._refresh_session_catalog(project_id)
+            except Exception:
+                # The persisted snapshot remains valid during a Codex outage.
+                pass
+            with self._session_catalog_condition:
+                if (
+                    project_id in self._session_catalog_refresh_again
+                    and not self._closed.is_set()
+                ):
+                    self._session_catalog_refresh_again.discard(project_id)
+                    continue
+                self._session_catalog_refresh_again.discard(project_id)
+                self._session_catalog_refreshing.discard(project_id)
+                self._session_catalog_condition.notify_all()
+                return
+        with self._session_catalog_condition:
+            self._session_catalog_refresh_again.discard(project_id)
+            self._session_catalog_refreshing.discard(project_id)
+            self._session_catalog_condition.notify_all()
 
     # Authentication and pairing ---------------------------------------------
 
@@ -379,6 +528,27 @@ class CoFleetHostService:
             for key, value in ACCESS_PROFILES.items()
         ]
 
+    def _codex_thread_list(self, params: Mapping[str, Any]) -> Dict[str, Any]:
+        """List all current Codex source variants with an old-server fallback."""
+
+        with self._codex_source_kinds_lock:
+            source_kinds = list(self._codex_source_kinds)
+        request = dict(params)
+        request["sourceKinds"] = source_kinds
+        try:
+            return self.codex.request("thread/list", request)
+        except CodexRPCError as error:
+            if source_kinds == LEGACY_CODEX_SOURCE_KINDS:
+                raise
+            rpc_code = error.details.get("rpcCode")
+            if rpc_code not in (None, -32602) and "source" not in error.message.lower():
+                raise
+            with self._codex_source_kinds_lock:
+                self._codex_source_kinds = list(LEGACY_CODEX_SOURCE_KINDS)
+            fallback = dict(params)
+            fallback["sourceKinds"] = list(LEGACY_CODEX_SOURCE_KINDS)
+            return self.codex.request("thread/list", fallback)
+
     def _dispatch_projects(
         self, method: str, query: Mapping[str, str], body: Dict[str, Any]
     ) -> ServiceResponse:
@@ -402,6 +572,7 @@ class CoFleetHostService:
             self.database.create_project(name, str(canonical), str(canonical))
         )
         self.events.publish("project.created", {"project": project})
+        self._schedule_session_catalog_after_mutation(project["id"])
         return ServiceResponse(status=201, payload={"project": project})
 
     def _dispatch_project(
@@ -452,11 +623,10 @@ class CoFleetHostService:
             "sortKey": "recency_at",
             "sortDirection": "desc",
             "archived": False,
-            "sourceKinds": ["cli", "vscode", "appServer", "unknown"],
         }
         if query.get("cursor"):
             params["cursor"] = query["cursor"]
-        result = self.codex.request("thread/list", params)
+        result = self._codex_thread_list(params)
         roots: Dict[str, Dict[str, Any]] = {}
         for thread in result.get("data", []):
             if not isinstance(thread, dict) or not isinstance(thread.get("cwd"), str):
@@ -482,25 +652,548 @@ class CoFleetHostService:
     # Sessions and turns -------------------------------------------------------
 
     def _project_sessions(self, project_id: str, query: Mapping[str, str]) -> ServiceResponse:
-        project = self.database.get_project(project_id)
         limit = bounded_int(query.get("limit"), "limit", 5, 1, 50)
+        archived = query.get("archived", "false").lower() == "true"
+        # CoFleet's primary surface is exactly the newest five active tasks.
+        # Return that durable snapshot without touching app-server, then refresh
+        # it once in the background. Cursor and archived pages remain canonical
+        # live reads because they cannot share the first-page cursor safely.
+        if limit == 5 and not archived and not query.get("cursor"):
+            cached = self.database.get_session_catalog_cache(project_id)
+            if cached is not None:
+                self._schedule_session_catalog_refresh(project_id)
+                return ServiceResponse(payload=cached)
+            return ServiceResponse(
+                payload=self._load_session_catalog_on_cache_miss(project_id)
+            )
+
+        project = self.database.get_project(project_id)
         params: Dict[str, Any] = {
             "cwd": project["canonicalPath"],
             "limit": limit,
             "sortKey": "recency_at",
             "sortDirection": "desc",
-            "archived": query.get("archived", "false").lower() == "true",
-            "sourceKinds": ["cli", "vscode", "appServer", "unknown"],
+            "archived": archived,
         }
         if query.get("cursor"):
             params["cursor"] = query["cursor"]
-        result = self.codex.request("thread/list", params)
+        result = self._codex_thread_list(params)
         sessions = [
             self._normalize_session(row, project_id)
             for row in result.get("data", [])
             if isinstance(row, dict)
         ]
         return ServiceResponse(payload={"sessions": sessions, "nextCursor": result.get("nextCursor")})
+
+    @staticmethod
+    def _cache_text(value: Any, maximum_bytes: int) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        encoded = value.encode("utf-8", errors="replace")
+        if len(encoded) <= maximum_bytes:
+            return value
+        return encoded[:maximum_bytes].decode("utf-8", errors="ignore") + "…"
+
+    def _session_catalog_payload(
+        self, project_id: str, result: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        sessions: List[Dict[str, Any]] = []
+        raw_data = result.get("data", [])
+        if not isinstance(raw_data, list):
+            raw_data = []
+        for row in raw_data:
+            if len(sessions) >= 5:
+                break
+            if not isinstance(row, dict):
+                continue
+            session = self._normalize_session(row, project_id)
+            session_id = self._cache_text(session.get("id"), 256)
+            if not session_id or session_id != session.get("id"):
+                continue
+            sessions.append(
+                {
+                    "id": session_id,
+                    "hostID": self._cache_text(session.get("hostID"), 256) or self.host_id,
+                    "projectID": project_id,
+                    "title": self._cache_text(session.get("title"), 2_000) or "Untitled task",
+                    "cwd": self._cache_text(session.get("cwd"), 8_192),
+                    "preview": self._cache_text(session.get("preview"), 12_000),
+                    "createdAt": session.get("createdAt")
+                    if isinstance(session.get("createdAt"), (str, int, float))
+                    else None,
+                    "updatedAt": session.get("updatedAt")
+                    if isinstance(session.get("updatedAt"), (str, int, float))
+                    else None,
+                    "archived": False,
+                    "model": self._cache_text(session.get("model"), 1_000),
+                    "accessLevel": self._cache_text(session.get("accessLevel"), 128),
+                    "reasoningEffort": self._cache_text(
+                        session.get("reasoningEffort"), 128
+                    ),
+                    "serviceTier": self._cache_text(session.get("serviceTier"), 128),
+                    "provider": "codex",
+                }
+            )
+        cursor = result.get("nextCursor")
+        if not isinstance(cursor, str) or len(cursor) > 4_096:
+            cursor = None
+        return {"sessions": sessions, "nextCursor": cursor}
+
+    def _load_session_catalog(self, project_id: str) -> Dict[str, Any]:
+        with self._session_catalog_lifecycle_lock:
+            if self._closed.is_set():
+                raise CodexUnavailable("CoFleet host is shutting down.")
+            project = self.database.get_project(project_id)
+        result = self._codex_thread_list(
+            {
+                "cwd": project["canonicalPath"],
+                "limit": 5,
+                "sortKey": "recency_at",
+                "sortDirection": "desc",
+                "archived": False,
+            }
+        )
+        if not isinstance(result, dict):
+            raise CodexUnavailable("Codex returned an invalid session catalog.")
+        return self._session_catalog_payload(project_id, result)
+
+    def _load_session_catalog_on_cache_miss(
+        self, project_id: str
+    ) -> Dict[str, Any]:
+        deadline = time.monotonic() + self.config.rpc_timeout + 5.0
+        while not self._closed.is_set():
+            owns_refresh = False
+            with self._session_catalog_condition:
+                if project_id not in self._session_catalog_refreshing:
+                    self._session_catalog_refreshing.add(project_id)
+                    owns_refresh = True
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise CodexUnavailable(
+                            "Codex is still loading this project's task catalog."
+                        )
+                    self._session_catalog_condition.wait(timeout=remaining)
+
+            if not owns_refresh:
+                cached = self.database.get_session_catalog_cache(project_id)
+                if cached is not None:
+                    return cached
+                continue
+
+            try:
+                payload = self._load_session_catalog(project_id)
+                self._store_session_catalog(project_id, payload)
+                return payload
+            finally:
+                with self._session_catalog_condition:
+                    self._session_catalog_refreshing.discard(project_id)
+                    followup = project_id in self._session_catalog_refresh_again
+                    self._session_catalog_refresh_again.discard(project_id)
+                    self._session_catalog_condition.notify_all()
+                if followup and not self._closed.is_set():
+                    self._schedule_session_catalog_refresh(project_id)
+        raise CodexUnavailable("CoFleet host is shutting down.")
+
+    def _store_session_catalog(
+        self, project_id: str, payload: Dict[str, Any]
+    ) -> bool:
+        with self._session_catalog_lifecycle_lock:
+            if self._closed.is_set():
+                return False
+            changed = self.database.put_session_catalog_cache(project_id, payload)
+            for session in payload["sessions"]:
+                self._track_session_id(session.get("id"))
+            if changed:
+                self.events.publish(
+                    "session.catalogUpdated",
+                    {
+                        "projectID": project_id,
+                        "currentSessionID": payload["sessions"][0]["id"]
+                        if payload["sessions"]
+                        else None,
+                    },
+                )
+            return changed
+
+    def _refresh_session_catalog(self, project_id: str) -> bool:
+        payload = self._load_session_catalog(project_id)
+        return self._store_session_catalog(project_id, payload)
+
+    def _project_ids_for_session(self, session_id: str) -> List[str]:
+        project_ids: List[str] = []
+        settings = self.database.get_session_settings(session_id)
+        if settings is not None:
+            project_ids.append(settings["projectID"])
+        for project_id in self.database.cached_project_ids_for_session(session_id):
+            if project_id not in project_ids:
+                project_ids.append(project_id)
+        if project_ids:
+            self._track_session_id(session_id)
+        return project_ids
+
+    def _track_session_id(self, session_id: Any) -> None:
+        watcher = self._filesystem_activity_watcher
+        if (
+            watcher is not None
+            and isinstance(session_id, str)
+            and hasattr(watcher, "track")
+        ):
+            watcher.track(session_id)
+
+    def _schedule_session_catalog_for_session(self, session_id: str) -> None:
+        if not self._background_maintenance_enabled:
+            return
+        for project_id in self._project_ids_for_session(session_id):
+            self._schedule_session_catalog_refresh(project_id, force_followup=True)
+
+    def _project_ids_for_thread(self, thread: Mapping[str, Any]) -> List[str]:
+        session_id = thread.get("id")
+        project_ids = (
+            self._project_ids_for_session(session_id)
+            if isinstance(session_id, str) and session_id
+            else []
+        )
+        cwd = thread.get("cwd")
+        if not isinstance(cwd, str) or not cwd:
+            return project_ids
+        try:
+            canonical_cwd = os.path.realpath(os.path.abspath(os.path.expanduser(cwd)))
+        except (OSError, ValueError):
+            return project_ids
+        matches: List[Tuple[int, str]] = []
+        for project in self.database.list_projects():
+            root = project.get("canonicalPath")
+            if not isinstance(root, str) or not root:
+                continue
+            canonical_root = os.path.realpath(root)
+            try:
+                belongs = os.path.commonpath((canonical_root, canonical_cwd)) == canonical_root
+            except ValueError:
+                belongs = False
+            if belongs:
+                matches.append((len(canonical_root), project["id"]))
+        # A nested registered project is more specific than its parent.
+        matches.sort(reverse=True)
+        if matches and matches[0][1] not in project_ids:
+            project_ids.insert(0, matches[0][1])
+        return project_ids
+
+    def _merge_session_catalog_thread(
+        self, project_id: str, thread: Mapping[str, Any]
+    ) -> bool:
+        if thread.get("archived") is True:
+            return False
+        candidate = self._session_catalog_payload(
+            project_id, {"data": [dict(thread)], "nextCursor": None}
+        )["sessions"]
+        if not candidate:
+            return False
+        current = self.database.get_session_catalog_cache(project_id) or {
+            "sessions": [],
+            "nextCursor": None,
+        }
+        row = candidate[0]
+        sessions = [row]
+        sessions.extend(
+            session
+            for session in current["sessions"]
+            if session.get("id") != row["id"]
+        )
+        payload = {
+            "sessions": sessions[:5],
+            "nextCursor": current.get("nextCursor"),
+        }
+        return self._store_session_catalog(project_id, payload)
+
+    @staticmethod
+    def _activity_from_thread_status(
+        status: Any,
+    ) -> Tuple[str, Optional[str]]:
+        if not isinstance(status, dict):
+            return "idle", None
+        kind = status.get("type")
+        if kind == "active":
+            flags = status.get("activeFlags")
+            if isinstance(flags, list) and "waitingOnApproval" in flags:
+                return "waitingForInteraction", "approval"
+            if isinstance(flags, list) and "waitingOnUserInput" in flags:
+                return "waitingForInteraction", "question"
+            return "working", None
+        if kind == "systemError":
+            return "failed", None
+        return "idle", None
+
+    def _publish_project_activity(
+        self,
+        project_id: str,
+        session_id: str,
+        state: str,
+        *,
+        turn_id: Optional[str] = None,
+        item_kind: Optional[str] = None,
+        source: str = "codexAppServer",
+    ) -> None:
+        key = (project_id, session_id)
+        fingerprint = (state, turn_id, item_kind)
+        with self._external_activity_condition:
+            if self._external_activity_states.get(key) == fingerprint:
+                return
+            self._external_activity_states[key] = fingerprint
+        data: Dict[str, Any] = {
+            "type": "project.activityChanged",
+            "hostID": self.host_id,
+            "projectID": project_id,
+            "sessionID": session_id,
+            "state": state,
+            "observedAt": self._iso_time(now()),
+            "source": source,
+        }
+        if turn_id:
+            data["turnID"] = turn_id
+        if item_kind:
+            data["itemKind"] = item_kind
+        self.events.publish("project.activityChanged", data)
+
+    def _publish_thread_activity(
+        self,
+        thread: Mapping[str, Any],
+        *,
+        source: str = "codexAppServer",
+    ) -> None:
+        session_id = thread.get("id")
+        if not isinstance(session_id, str) or not session_id:
+            return
+        project_ids = self._project_ids_for_thread(thread)
+        for project_id in project_ids:
+            self._merge_session_catalog_thread(project_id, thread)
+        state, item_kind = self._activity_from_thread_status(thread.get("status"))
+        for project_id in project_ids:
+            self._publish_project_activity(
+                project_id,
+                session_id,
+                state,
+                item_kind=item_kind,
+                source=source,
+            )
+
+    def _on_codex_filesystem_activity(self, session_id: str) -> None:
+        if self._closed.is_set() or not isinstance(session_id, str) or not session_id:
+            return
+        # CoFleet's own app-server also writes rollouts. Its direct notification
+        # stream is richer and avoids a redundant canonical read.
+        native_at = self._native_activity_at.get(session_id)
+        if native_at is not None and time.monotonic() - native_at < 2.0:
+            return
+        self._external_activity_last_seen[session_id] = time.monotonic()
+        self._external_stale_followups[session_id] = 0
+        for project_id in self._project_ids_for_session(session_id):
+            self._publish_project_activity(
+                project_id,
+                session_id,
+                "working",
+                source="codexDesktop",
+            )
+        with self._external_activity_condition:
+            self._external_activity_deadlines[session_id] = time.monotonic() + 0.45
+            self._external_activity_attempts.setdefault(session_id, 0)
+            self._external_activity_condition.notify_all()
+
+    def _defer_stale_external_snapshot(self, session_id: str) -> bool:
+        """Keep a Desktop task working while cross-process history is stale.
+
+        A private app-server can temporarily expose only the previous interrupted
+        turn while Codex Desktop owns the live turn.  A small exponential set of
+        targeted reads waits for the canonical completed/failed turn without
+        mistaking that stale snapshot for completion.
+        """
+
+        last_seen = self._external_activity_last_seen.get(session_id)
+        if last_seen is None:
+            return False
+        elapsed = time.monotonic() - last_seen
+        abort_after = 15.0
+        if elapsed >= abort_after:
+            self._external_activity_last_seen.pop(session_id, None)
+            self._external_stale_followups.pop(session_id, None)
+            for project_id in self._project_ids_for_session(session_id):
+                self._publish_project_activity(
+                    project_id,
+                    session_id,
+                    "idle",
+                    source="codexDesktop",
+                )
+            return True
+        followup = self._external_stale_followups.get(session_id, 0)
+        delays = (0.75, 1.5, 3.0, 5.0)
+        delay = delays[followup] if followup < len(delays) else abort_after - elapsed
+        self._external_stale_followups[session_id] = followup + 1
+        with self._external_activity_condition:
+            deadline = time.monotonic() + max(0.1, min(delay, abort_after - elapsed))
+            current = self._external_activity_deadlines.get(session_id)
+            if current is None or deadline < current:
+                self._external_activity_deadlines[session_id] = deadline
+            self._external_activity_condition.notify_all()
+        return True
+
+    def _external_activity_loop(self) -> None:
+        while not self._closed.is_set():
+            due: List[str] = []
+            with self._external_activity_condition:
+                while not self._closed.is_set():
+                    current = time.monotonic()
+                    due = [
+                        session_id
+                        for session_id, deadline in self._external_activity_deadlines.items()
+                        if deadline <= current and session_id not in self._external_activity_inflight
+                    ]
+                    if due:
+                        for session_id in due:
+                            self._external_activity_deadlines.pop(session_id, None)
+                            self._external_activity_inflight.add(session_id)
+                        break
+                    deadlines = list(self._external_activity_deadlines.values())
+                    timeout = max(0.05, min(deadlines) - current) if deadlines else 1.0
+                    self._external_activity_condition.wait(timeout=timeout)
+            for session_id in due:
+                try:
+                    self._external_activity_executor.submit(
+                        self._external_activity_reconcile_worker, session_id
+                    )
+                except RuntimeError:
+                    with self._external_activity_condition:
+                        self._external_activity_inflight.discard(session_id)
+
+    def _external_activity_reconcile_worker(self, session_id: str) -> None:
+        retry = False
+        try:
+            native_at = self._native_activity_at.get(session_id)
+            if native_at is None or time.monotonic() - native_at >= 2.0:
+                self._reconcile_external_session(session_id)
+        except Exception:
+            with self._external_activity_condition:
+                attempt = self._external_activity_attempts.get(session_id, 0) + 1
+                self._external_activity_attempts[session_id] = attempt
+                retry = attempt < 3 and not self._closed.is_set()
+        else:
+            with self._external_activity_condition:
+                self._external_activity_attempts.pop(session_id, None)
+        finally:
+            with self._external_activity_condition:
+                self._external_activity_inflight.discard(session_id)
+                if retry:
+                    self._external_activity_deadlines[session_id] = (
+                        time.monotonic() + 0.5 * self._external_activity_attempts[session_id]
+                    )
+                self._external_activity_condition.notify_all()
+
+    @staticmethod
+    def _bounded_fingerprint_store(
+        store: Dict[Any, str], key: Any, value: str, maximum: int
+    ) -> bool:
+        if store.get(key) == value:
+            return False
+        store[key] = value
+        while len(store) > maximum:
+            store.pop(next(iter(store)))
+        return True
+
+    def _reconcile_external_session(self, session_id: str) -> bool:
+        """Read one canonical task after an opaque rollout metadata wakeup."""
+
+        result = self.codex.request(
+            "thread/read",
+            {"threadId": session_id, "includeTurns": True},
+            timeout=min(15.0, self.config.rpc_timeout),
+        )
+        thread = result.get("thread")
+        if not isinstance(thread, dict) or thread.get("id") != session_id:
+            return False
+        project_ids = self._project_ids_for_thread(thread)
+        if not project_ids:
+            # Unknown/unregistered tasks stay private and generate no SSE data.
+            return False
+
+        turns = thread.get("turns")
+        raw_turns = [turn for turn in turns if isinstance(turn, dict)] if isinstance(turns, list) else []
+        if not raw_turns:
+            if self._defer_stale_external_snapshot(session_id):
+                return True
+            self._publish_thread_activity(thread, source="codexDesktop")
+            return True
+        latest = raw_turns[-1]
+        turn_id = latest.get("id")
+        if not isinstance(turn_id, str) or not turn_id:
+            if self._defer_stale_external_snapshot(session_id):
+                return True
+            self._publish_thread_activity(thread, source="codexDesktop")
+            return True
+        state = self._turn_state(latest.get("status"))
+        if state == "interrupted" and self._defer_stale_external_snapshot(session_id):
+            return True
+        for project_id in project_ids:
+            self._merge_session_catalog_thread(project_id, thread)
+        turn_fingerprint = json_hash(latest)
+        turn_changed = self._bounded_fingerprint_store(
+            self._external_turn_fingerprints,
+            (session_id, turn_id),
+            turn_fingerprint,
+            512,
+        )
+        terminal = state in ("completed", "failed", "interrupted")
+        if turn_changed and not terminal:
+            self._publish_turn(session_id, latest, source="codexDesktop")
+        items = latest.get("items")
+        published_item = False
+        if isinstance(items, list):
+            for item in [entry for entry in items if isinstance(entry, dict)][-64:]:
+                item_id = item.get("id")
+                if not isinstance(item_id, str) or not item_id:
+                    continue
+                if not self._bounded_fingerprint_store(
+                    self._external_item_fingerprints,
+                    (session_id, turn_id, item_id),
+                    json_hash(item),
+                    4_096,
+                ):
+                    continue
+                status = str(item.get("status", "")).lower()
+                completed = status not in ("inprogress", "in_progress", "running", "streaming")
+                self._publish_item(
+                    session_id,
+                    turn_id,
+                    item,
+                    forced_state="completed" if completed else "streaming",
+                    timestamp_ms=None,
+                    completed=completed,
+                    source="codexDesktop",
+                )
+                published_item = True
+        if turn_changed and terminal:
+            self._publish_turn(session_id, latest, source="codexDesktop")
+        if state in ("completed", "interrupted"):
+            activity_state = "idle"
+        elif state == "failed":
+            activity_state = "failed"
+        elif state == "waitingForInteraction":
+            activity_state = "waitingForInteraction"
+        else:
+            activity_state = "working"
+        if terminal or not published_item:
+            for project_id in project_ids:
+                self._publish_project_activity(
+                    project_id,
+                    session_id,
+                    activity_state,
+                    turn_id=turn_id,
+                    source="codexDesktop",
+                )
+        if activity_state in ("idle", "failed"):
+            self._external_activity_last_seen.pop(session_id, None)
+            self._external_stale_followups.pop(session_id, None)
+            with self._external_activity_condition:
+                self._external_activity_deadlines.pop(session_id, None)
+        return True
 
     def _create_session(self, body: Dict[str, Any]) -> ServiceResponse:
         project_id = require_string(body.get("projectID"), "projectID", 1, 128)
@@ -527,6 +1220,7 @@ class CoFleetHostService:
         )
         session = self._normalize_session(thread, project_id)
         self.events.publish("session.created", {"session": session})
+        self._schedule_session_catalog_after_mutation(project_id)
         return ServiceResponse(status=201, payload={"session": session})
 
     def _dispatch_session(
@@ -538,6 +1232,7 @@ class CoFleetHostService:
         body: Dict[str, Any],
     ) -> DispatchResult:
         session_id = rest[0]
+        self._track_session_id(session_id)
         if len(rest) == 2 and rest[1] == "transcript" and method == "GET":
             result = self.codex.request("thread/read", {"threadId": session_id, "includeTurns": True})
             thread = result.get("thread", {})
@@ -552,6 +1247,7 @@ class CoFleetHostService:
             name = require_string(body.get("title"), "title", 1, 200)
             self.codex.request("thread/name/set", {"threadId": session_id, "name": name})
             self.events.publish("session.renamed", {"sessionID": session_id, "title": name})
+            self._schedule_session_catalog_for_session(session_id)
             return ServiceResponse(payload={"sessionID": session_id, "title": name})
         if len(rest) == 2 and rest[1] in ("resume", "fork") and method == "POST":
             return self._resume_or_fork(session_id, rest[1], body)
@@ -561,6 +1257,7 @@ class CoFleetHostService:
             rpc_method = "thread/archive" if rest[1] == "archive" else "thread/unarchive"
             self.codex.request(rpc_method, {"threadId": session_id})
             self.events.publish("session.%s" % rest[1], {"sessionID": session_id})
+            self._schedule_session_catalog_for_session(session_id)
             return ServiceResponse(payload={"sessionID": session_id, "archived": rest[1] == "archive"})
         if len(rest) == 2 and rest[1] == "turns" and method == "POST":
             return self._start_turn(session_id, headers, body)
@@ -590,13 +1287,11 @@ class CoFleetHostService:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", session_id):
             raise APIError(422, "invalid_session_id", "The Codex session identifier is invalid.")
 
-        result = self.codex.request(
-            "thread/read", {"threadId": session_id, "includeTurns": False}
-        )
-        thread = result.get("thread")
-        if not isinstance(thread, dict) or thread.get("id") != session_id:
-            raise APIError(404, "session_not_found", "That Codex task is not available on this host.")
-
+        # This authenticated endpoint accepts only an opaque, tightly bounded task
+        # identifier and constructs the codex:// URL itself. A synchronous
+        # thread/read added no meaningful injection protection and made a UI tap
+        # wait on the app-server for tens of seconds. Codex remains authoritative
+        # when it resolves the deep link; nonexistent IDs simply do not open a task.
         self.desktop_opener(session_id)
         return ServiceResponse(payload={"sessionID": session_id, "opened": True})
 
@@ -651,6 +1346,7 @@ class CoFleetHostService:
         )
         session = self._normalize_session(thread if isinstance(thread, dict) else {"id": result_id}, project_id)
         self.events.publish("session.%s" % action, {"session": session})
+        self._schedule_session_catalog_after_mutation(project_id)
         return ServiceResponse(payload={"session": session})
 
     def _start_turn(
@@ -985,18 +1681,39 @@ class CoFleetHostService:
             bounded,
             self.config.interaction_ttl,
         )
+        public = self._public_interaction(interaction)
+        session_id = interaction.get("sessionID")
+        project_ids = (
+            self._project_ids_for_session(session_id)
+            if isinstance(session_id, str) and session_id
+            else []
+        )
+        pending_payload: Dict[str, Any] = {
+            "type": "interaction.pending",
+            "interaction": public,
+        }
+        if project_ids:
+            pending_payload["projectID"] = project_ids[0]
         self.events.publish(
             "interaction.pending",
-            {
-                "type": "interaction.pending",
-                "interaction": self._public_interaction(interaction),
-            },
+            pending_payload,
+        )
+        interaction_kind = (
+            "question" if public.get("kind") == "question" else "approval"
         )
         if interaction.get("sessionID") and interaction.get("turnID"):
             self._publish_turn(
                 interaction["sessionID"],
                 {"id": interaction["turnID"], "status": "waitingForInteraction"},
                 forced_state="waitingForInteraction",
+            )
+        for project_id in project_ids:
+            self._publish_project_activity(
+                project_id,
+                session_id,
+                "waitingForInteraction",
+                turn_id=interaction.get("turnID"),
+                item_kind=interaction_kind,
             )
 
     def _resolve_interaction(self, interaction_id: str, body: Dict[str, Any]) -> ServiceResponse:
@@ -1033,14 +1750,15 @@ class CoFleetHostService:
                     self.database.release_interaction(interaction_id)
                 raise
         public = self._public_interaction(resolved)
-        self.events.publish(
-            "interaction.resolved",
-            {
-                "type": "interaction.resolved",
-                "interactionID": interaction_id,
-                "sessionID": interaction.get("sessionID"),
-            },
-        )
+        resolved_payload: Dict[str, Any] = {
+            "type": "interaction.resolved",
+            "interactionID": interaction_id,
+            "sessionID": interaction.get("sessionID"),
+        }
+        project_ids = self._project_ids_for_session(interaction.get("sessionID") or "")
+        if project_ids:
+            resolved_payload["projectID"] = project_ids[0]
+        self.events.publish("interaction.resolved", resolved_payload)
         if interaction.get("sessionID") and interaction.get("turnID"):
             self._publish_turn(
                 interaction["sessionID"],
@@ -1244,14 +1962,15 @@ class CoFleetHostService:
                 )
             except Exception:
                 pass
-            self.events.publish(
-                "interaction.expired",
-                {
-                    "type": "interaction.expired",
-                    "interactionID": interaction["id"],
-                    "sessionID": interaction.get("sessionID"),
-                },
-            )
+            payload: Dict[str, Any] = {
+                "type": "interaction.expired",
+                "interactionID": interaction["id"],
+                "sessionID": interaction.get("sessionID"),
+            }
+            project_ids = self._project_ids_for_session(interaction.get("sessionID") or "")
+            if project_ids:
+                payload["projectID"] = project_ids[0]
+            self.events.publish("interaction.expired", payload)
 
     def _maintenance_loop(self) -> None:
         while not self._closed.wait(2.0):
@@ -1271,14 +1990,17 @@ class CoFleetHostService:
                 generation if isinstance(generation, str) else None
             )
             for interaction in invalidated:
-                self.events.publish(
-                    "interaction.expired",
-                    {
-                        "type": "interaction.expired",
-                        "interactionID": interaction["id"],
-                        "sessionID": interaction.get("sessionID"),
-                    },
+                payload: Dict[str, Any] = {
+                    "type": "interaction.expired",
+                    "interactionID": interaction["id"],
+                    "sessionID": interaction.get("sessionID"),
+                }
+                project_ids = self._project_ids_for_session(
+                    interaction.get("sessionID") or ""
                 )
+                if project_ids:
+                    payload["projectID"] = project_ids[0]
+                self.events.publish("interaction.expired", payload)
             self.events.publish(
                 "stream.reset",
                 {
@@ -1289,15 +2011,37 @@ class CoFleetHostService:
             )
             return
 
+        if method == "thread/started":
+            thread = params.get("thread")
+            if isinstance(thread, dict):
+                session_id = thread.get("id")
+                if isinstance(session_id, str) and session_id:
+                    self._native_activity_at[session_id] = time.monotonic()
+                self._publish_thread_activity(thread)
+            return
+
         session_id = params.get("threadId")
         if not isinstance(session_id, str) or not session_id:
             # Notifications without thread scope are intentionally not exposed
             # through the conversation stream.
             return
+        self._native_activity_at[session_id] = time.monotonic()
+        if method == "thread/status/changed":
+            state, item_kind = self._activity_from_thread_status(params.get("status"))
+            for project_id in self._project_ids_for_session(session_id):
+                self._publish_project_activity(
+                    project_id,
+                    session_id,
+                    state,
+                    item_kind=item_kind,
+                )
+            return
         if method in ("turn/started", "turn/completed"):
             turn = params.get("turn")
             if isinstance(turn, dict):
                 self._publish_turn(session_id, turn)
+            if method == "turn/completed":
+                self._schedule_session_catalog_for_session(session_id)
             return
         if method in ("item/started", "item/completed"):
             item = params.get("item")
@@ -1364,6 +2108,7 @@ class CoFleetHostService:
         session_id: str,
         turn: Dict[str, Any],
         forced_state: Optional[str] = None,
+        source: str = "codexAppServer",
     ) -> None:
         turn_id = turn.get("id")
         if not isinstance(turn_id, str) or not turn_id:
@@ -1394,9 +2139,33 @@ class CoFleetHostService:
             "completedAt": self._iso_time(completed_at) if completed_at is not None else None,
             "errorMessage": error[:10_000] if isinstance(error, str) else None,
         }
-        self.events.publish(
-            "turn.updated", {"type": "turn.updated", "turn": model, "sessionID": session_id}
-        )
+        project_ids = self._project_ids_for_session(session_id)
+        targets: List[Optional[str]] = project_ids or [None]
+        for project_id in targets:
+            payload: Dict[str, Any] = {
+                "type": "turn.updated",
+                "turn": model,
+                "sessionID": session_id,
+            }
+            if project_id is not None:
+                payload["projectID"] = project_id
+            self.events.publish("turn.updated", payload)
+        if state in ("completed", "interrupted"):
+            activity_state = "idle"
+        elif state == "failed":
+            activity_state = "failed"
+        elif state == "waitingForInteraction":
+            activity_state = "waitingForInteraction"
+        else:
+            activity_state = "working"
+        for project_id in project_ids:
+            self._publish_project_activity(
+                project_id,
+                session_id,
+                activity_state,
+                turn_id=turn_id,
+                source=source,
+            )
         if state in ("completed", "failed", "interrupted"):
             with self._stream_lock:
                 self._turn_started_at.pop(key, None)
@@ -1480,6 +2249,7 @@ class CoFleetHostService:
         forced_state: Optional[str],
         timestamp_ms: Any,
         completed: bool,
+        source: str = "codexAppServer",
     ) -> None:
         model = self._event_item_model(item, turn_id, forced_state, timestamp_ms)
         key = (session_id, turn_id, model["id"])
@@ -1490,9 +2260,26 @@ class CoFleetHostService:
                 cached = dict(model)
                 cached["_hasDelta"] = False
                 self._stream_items[key] = cached
-        self.events.publish(
-            "turn.item", {"type": "turn.item", "item": model, "sessionID": session_id}
-        )
+        project_ids = self._project_ids_for_session(session_id)
+        targets: List[Optional[str]] = project_ids or [None]
+        for project_id in targets:
+            payload: Dict[str, Any] = {
+                "type": "turn.item",
+                "item": model,
+                "sessionID": session_id,
+            }
+            if project_id is not None:
+                payload["projectID"] = project_id
+            self.events.publish("turn.item", payload)
+        for project_id in project_ids:
+            self._publish_project_activity(
+                project_id,
+                session_id,
+                "working",
+                turn_id=turn_id,
+                item_kind=model["kind"],
+                source=source,
+            )
 
     def _publish_item_delta(
         self, session_id: str, params: Dict[str, Any], kind: str
@@ -1527,9 +2314,25 @@ class CoFleetHostService:
             model["_hasDelta"] = True
             self._stream_items[key] = model
             public = {key_name: value for key_name, value in model.items() if not key_name.startswith("_")}
-        self.events.publish(
-            "turn.item", {"type": "turn.item", "item": public, "sessionID": session_id}
-        )
+        project_ids = self._project_ids_for_session(session_id)
+        targets: List[Optional[str]] = project_ids or [None]
+        for project_id in targets:
+            payload: Dict[str, Any] = {
+                "type": "turn.item",
+                "item": public,
+                "sessionID": session_id,
+            }
+            if project_id is not None:
+                payload["projectID"] = project_id
+            self.events.publish("turn.item", payload)
+        for project_id in project_ids:
+            self._publish_project_activity(
+                project_id,
+                session_id,
+                "working",
+                turn_id=turn_id,
+                item_kind=kind,
+            )
 
     def _sse_request(
         self,
@@ -1695,6 +2498,7 @@ class CoFleetHostService:
 
     def _project_with_source_control(self, project: Dict[str, Any]) -> Dict[str, Any]:
         enriched = dict(project)
+        enriched["currentSessionID"] = self.database.cached_current_session_id(project["id"])
         enriched["sourceControl"] = self.source_control(project["id"])
         return enriched
 

@@ -232,3 +232,142 @@ public struct CoFleetTurnEventDecoder: Sendable {
         return CoFleetSequencedTurnEvent(id: event.id, event: try envelope.event())
     }
 }
+
+/// Decodes the host-wide event log without exposing provider-native payloads.
+/// Unknown events still advance the replay cursor as checkpoints so a newer
+/// host cannot trap an older client in a reconnect loop.
+public struct CoFleetHostEventDecoder: Sendable {
+    private let hostID: CoFleetHostID
+
+    public init(hostID: CoFleetHostID) {
+        self.hostID = hostID
+    }
+
+    public func decode(_ event: CoFleetSSEEvent) throws -> CoFleetSequencedHostEvent {
+        guard let name = event.name else {
+            return result(event, .checkpoint)
+        }
+        if name == "resetRequired" || name == "stream.reset" {
+            return result(event, .resetRequired)
+        }
+
+        let data = Data(event.data.utf8)
+        switch name {
+        case "project.activityChanged":
+            let payload = try decoder.decode(ActivityPayload.self, from: data)
+            guard !payload.projectID.isEmpty,
+                  let state = CoFleetHostActivityState(rawValue: payload.state) else {
+                throw CoFleetClientError.invalidResponse
+            }
+            let source = payload.source.flatMap(CoFleetProjectActivitySource.init(rawValue:)) ?? .unknown
+            return result(event, .activityChanged(.init(
+                hostID: payload.hostID.map(CoFleetHostID.init(rawValue:)) ?? hostID,
+                projectID: payload.projectID,
+                sessionID: payload.sessionID,
+                turnID: payload.turnID,
+                state: state,
+                itemKind: payload.itemKind,
+                observedAt: payload.observedAt ?? .now,
+                source: source
+            )))
+        case "session.catalogUpdated":
+            let payload = try decoder.decode(CatalogPayload.self, from: data)
+            guard !payload.projectID.isEmpty else { throw CoFleetClientError.invalidResponse }
+            return result(event, .sessionCatalogUpdated(.init(
+                hostID: hostID,
+                projectID: payload.projectID,
+                currentSessionID: payload.currentSessionID
+            )))
+        case "turn.updated":
+            let payload = try decoder.decode(TurnPayload.self, from: data)
+            return result(event, .turnUpdated(projectID: payload.projectID, turn: payload.turn))
+        case "turn.item":
+            let payload = try decoder.decode(ItemPayload.self, from: data)
+            guard !payload.sessionID.isEmpty else { throw CoFleetClientError.invalidResponse }
+            return result(event, .turnItem(
+                projectID: payload.projectID,
+                sessionID: payload.sessionID,
+                item: payload.item
+            ))
+        case "interaction.pending":
+            let payload = try decoder.decode(InteractionPayload.self, from: data)
+            return result(event, .interactionPending(
+                projectID: payload.projectID,
+                interaction: payload.interaction
+            ))
+        case "interaction.resolved":
+            let payload = try decoder.decode(InteractionLifecyclePayload.self, from: data)
+            guard !payload.interactionID.isEmpty else { throw CoFleetClientError.invalidResponse }
+            return result(event, .interactionResolved(
+                projectID: payload.projectID,
+                sessionID: payload.sessionID,
+                interactionID: payload.interactionID
+            ))
+        case "interaction.expired":
+            let payload = try decoder.decode(InteractionLifecyclePayload.self, from: data)
+            guard !payload.interactionID.isEmpty else { throw CoFleetClientError.invalidResponse }
+            return result(event, .interactionExpired(
+                projectID: payload.projectID,
+                sessionID: payload.sessionID,
+                interactionID: payload.interactionID
+            ))
+        default:
+            return result(event, .checkpoint)
+        }
+    }
+
+    private var decoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+
+    private func result(
+        _ raw: CoFleetSSEEvent,
+        _ event: CoFleetHostEvent
+    ) -> CoFleetSequencedHostEvent {
+        CoFleetSequencedHostEvent(
+            id: raw.id,
+            event: event,
+            retryMilliseconds: raw.retryMilliseconds
+        )
+    }
+}
+
+private struct ActivityPayload: Decodable {
+    var hostID: String?
+    var projectID: String
+    var sessionID: String?
+    var turnID: String?
+    var state: String
+    var itemKind: String?
+    var observedAt: Date?
+    var source: String?
+}
+
+private struct CatalogPayload: Decodable {
+    var projectID: String
+    var currentSessionID: String?
+}
+
+private struct TurnPayload: Decodable {
+    var projectID: String?
+    var turn: CoFleetTurn
+}
+
+private struct ItemPayload: Decodable {
+    var projectID: String?
+    var sessionID: String
+    var item: CoFleetTurnItem
+}
+
+private struct InteractionPayload: Decodable {
+    var projectID: String?
+    var interaction: CoFleetInteraction
+}
+
+private struct InteractionLifecyclePayload: Decodable {
+    var projectID: String?
+    var sessionID: String?
+    var interactionID: String
+}

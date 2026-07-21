@@ -21,12 +21,16 @@ class HostConfig:
     port: int = 47831
     display_name: Optional[str] = None
     home: pathlib.Path = field(default_factory=pathlib.Path.home)
+    codex_home: Optional[pathlib.Path] = None
     codex_command: Tuple[str, ...] = ("codex", "app-server")
     request_body_limit: int = 1_048_576
     pet_asset_limit: int = 16 * 1024 * 1024
     event_limit: int = 2_000
     interaction_ttl: int = 300
-    rpc_timeout: float = 30.0
+    # A cold Codex app-server can spend more than 30 seconds rebuilding its
+    # thread index. Keep this above the observed cold-start window; Apple
+    # clients allow a slightly longer transport deadline.
+    rpc_timeout: float = 60.0
     require_private_tailscale: bool = False
     event_payload_limit: int = 256 * 1024
     event_storage_limit: int = 16 * 1024 * 1024
@@ -83,6 +87,15 @@ class HostConfig:
     @property
     def pets_path(self) -> pathlib.Path:
         return self.data_dir / "pets"
+
+    @property
+    def codex_state_path(self) -> pathlib.Path:
+        if self.codex_home is not None:
+            return self.codex_home.expanduser()
+        configured = os.environ.get("CODEX_HOME")
+        if configured:
+            return pathlib.Path(configured).expanduser()
+        return self.home.expanduser() / ".codex"
 
     @classmethod
     def with_command(cls, command: Sequence[str], **kwargs: object) -> "HostConfig":

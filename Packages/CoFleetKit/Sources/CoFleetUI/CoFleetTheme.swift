@@ -2,6 +2,9 @@ import SwiftUI
 
 public enum CoFleetTheme {
     public static let background = Color(red: 0.025, green: 0.035, blue: 0.045)
+    /// The conversation workspace keeps Manada's deeper navy so long-form
+    /// transcript surfaces remain visually distinct from the fleet shell.
+    public static let agentBayBackground = Color(red: 0.02, green: 0.05, blue: 0.10)
     public static let surface = Color(red: 0.07, green: 0.085, blue: 0.10)
     public static let elevated = Color(red: 0.105, green: 0.12, blue: 0.14)
     public static let panelFill = Color.white.opacity(0.075)
