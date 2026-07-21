@@ -1,0 +1,16 @@
+# Install only as ~/.config/systemd/user/cofleet-host.service and manage with
+# systemctl --user. Never install this as a system unit or run it as root.
+[Unit]
+Description=CoFleet Codex host service (per-user)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cofleet-host --data-dir %h/.local/share/cofleet-host serve --host 127.0.0.1 --port 47831 --require-private-tailscale
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a focused, privacy-preserving improvement.
+title: "[Feature]: "
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user outcome is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include platform differences and offline behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Security, privacy, and compatibility considerations
+      description: Explain any host, pairing, filesystem, transcript, or API impact.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This proposal keeps Codex as the provider and source of truth.
+          required: true

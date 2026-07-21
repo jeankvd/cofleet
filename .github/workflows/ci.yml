@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install validation tools
+        run: sudo apt-get update && sudo apt-get install --yes ripgrep shellcheck
+      - name: Validate repository
+        env:
+          COFLEET_GITLEAKS_EXTERNAL: "1"
+        run: Scripts/check-repository.sh
+      - name: Scan Git history and working tree for secrets
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  host-tests:
+    name: Host tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.13"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run host and API tests
+        env:
+          PYTHONPATH: Services/CoFleetHost
+          COFLEET_TEST_ROOT: ${{ runner.temp }}/cofleet-host-tests
+        run: python -m unittest discover -s Tests/HostTests -v
+
+  swift-tests:
+    name: Swift package tests
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Run isolated Swift tests
+        env:
+          CFFIXED_USER_HOME: ${{ runner.temp }}/cofleet-home
+          COFLEET_TEST_ROOT: ${{ runner.temp }}/cofleet-swift-tests
+        run: |
+          mkdir -p "$CFFIXED_USER_HOME" "$COFLEET_TEST_ROOT"
+          swift test --package-path Packages/CoFleetKit --enable-code-coverage
+
+  project-generation:
+    name: Project and Apple metadata
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install project tools
+        run: brew bundle
+      - name: Regenerate icons and project
+        run: |
+          Scripts/generate-app-icons.sh
+          Scripts/generate-project.sh
+      - name: Require deterministic generation
+        run: git diff --exit-code -- Assets CoFleet.xcodeproj
+      - name: Validate Apple metadata and source tree
+        run: Scripts/check-repository.sh
+
+  apple-builds:
+    name: Unsigned ${{ matrix.name }} build
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Release
+            kind: macos
+          - name: iOS simulator
+            kind: ios-simulator
+          - name: generic iOS device
+            kind: ios-device
+          - name: watchOS
+            kind: watch
+          - name: iOS widgets
+            kind: ios-widgets
+          - name: Watch complications
+            kind: watch-widgets
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build without signing, installing, or launching
+        env:
+          COFLEET_DERIVED_DATA: ${{ runner.temp }}/DerivedData
+        run: Scripts/build.sh "${{ matrix.kind }}"
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: build-logs-${{ matrix.kind }}
+          path: ${{ runner.temp }}/DerivedData/Logs
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,35 @@
+name: Simulator UI smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 9 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui-smoke:
+    name: ${{ matrix.platform }} UI smoke
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, macos]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Run launch and Progress smoke
+        run: Scripts/run-ui-tests.sh --platform "${{ matrix.platform }}"
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ui-results-${{ matrix.platform }}
+          path: .artifacts/**/*.xcresult
+          if-no-files-found: error
+          retention-days: 14

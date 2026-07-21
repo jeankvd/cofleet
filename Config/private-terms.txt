@@ -1,0 +1,8 @@
+# One case-insensitive fixed string per line. This file is excluded from its own
+# scan. Keep real hostnames, addresses, paths, and conversations out of this
+# repository instead of documenting them here.
+hermes
+opencode
+claude
+obsidian
+webdav

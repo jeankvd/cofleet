@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Install only in ~/Library/LaunchAgents. Never install as a LaunchDaemon. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.cofleet.host</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__COFLEET_HOST_EXECUTABLE__</string>
+    <string>--data-dir</string>
+    <string>__COFLEET_DATA_DIRECTORY__</string>
+    <string>serve</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>47831</string>
+    <string>--require-private-tailscale</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__COFLEET_LOG_DIRECTORY__/host.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__COFLEET_LOG_DIRECTORY__/host.stderr.log</string>
+</dict>
+</plist>

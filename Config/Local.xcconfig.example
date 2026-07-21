@@ -1,0 +1,7 @@
+// Copy this file to Local.xcconfig and use identifiers owned by your team.
+// Never put tokens, passwords, Tailnet addresses, or service URLs here.
+
+COFLEET_BUNDLE_ID_PREFIX = com.example.cofleet
+COFLEET_APP_GROUP = group.com.example.cofleet.shared
+COFLEET_DEVELOPMENT_TEAM = ABCDE12345
+COFLEET_CODE_SIGN_IDENTITY = Apple Development

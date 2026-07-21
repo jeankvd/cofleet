@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleDisplayName</key>
+    <string>CoFleet for Codex</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>CoFleetAppGroupIdentifier</key>
+    <string>$(COFLEET_APP_GROUP)</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLName</key>
+            <string>$(COFLEET_BUNDLE_ID_PREFIX).ios</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>cofleet-codex</string>
+            </array>
+        </dict>
+    </array>
+    <key>CoFleetLicense</key>
+    <string>GPL-3.0-only with a GPLv3 Section 7 App Store permission</string>
+    <key>CoFleetSourceRevision</key>
+    <string>$(COFLEET_SOURCE_REVISION)</string>
+    <key>CoFleetSourceURL</key>
+    <string>$(COFLEET_SOURCE_URL)</string>
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>codex</string>
+    </array>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 Jean Diaz. No warranty.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>CoFleet connects to host services you explicitly pair on your private Tailnet.</string>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+    </dict>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+</dict>
+</plist>

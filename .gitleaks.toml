@@ -1,0 +1,12 @@
+title = "CoFleet gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public fixtures and generated project metadata only"
+paths = [
+  '''^LICENSE$''',
+  '''^Config/Local\.xcconfig\.example$''',
+  '''^Tests/.*/Fixtures/Public/'''
+]

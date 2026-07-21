@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a reproducible CoFleet problem using synthetic data.
+title: "[Bug]: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include pairing tokens, credentials, private task content, personal paths, or Tailnet addresses. Report security issues privately as described in SECURITY.md.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - macOS app
+        - iPhone app
+        - Apple Watch app
+        - Widget or complication
+        - Host service
+        - Build or CI
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: CoFleet version or commit
+      placeholder: 0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Use a temporary project and synthetic names.
+      placeholder: "1. Pair a test host…\n2. Open Progress…\n3. Observe…"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Add screenshots or logs only after removing private data.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed credentials, tokens, private addresses, paths, and conversation content.
+          required: true

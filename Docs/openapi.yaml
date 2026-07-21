@@ -1,0 +1,1444 @@
+openapi: 3.1.0
+info:
+  title: CoFleet Host API
+  version: 0.1.0
+  description: >-
+    Authenticated, host-local REST and SSE facade for Codex app-server. The
+    service binds only to loopback and is intended to be published to an
+    authenticated Tailnet with Tailscale Serve. Private deployments verify the
+    active Serve configuration at startup, reject any Funnel-enabled endpoint,
+    and require Serve-provided peer identity headers. Tailscale Funnel is
+    forbidden.
+servers:
+  - url: https://cofleet-host.example.ts.net/v1
+    description: Synthetic Tailscale Serve example
+security:
+  - bearerAuth: []
+tags:
+  - name: Host
+  - name: Projects
+  - name: Sessions
+  - name: Turns
+  - name: Interactions
+  - name: Workspace
+  - name: Pets
+paths:
+  /health:
+    get:
+      tags: [Host]
+      security: []
+      operationId: health
+      responses:
+        "200":
+          description: Service is running.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, service, version]
+                properties:
+                  ok: { type: boolean }
+                  service: { const: cofleet-host }
+                  version: { type: string }
+  /host:
+    get:
+      tags: [Host]
+      operationId: getHost
+      responses:
+        "200":
+          description: Host identity and capabilities.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [host]
+                properties:
+                  host: { $ref: "#/components/schemas/CoFleetHostInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /permission-profiles:
+    get:
+      tags: [Host]
+      operationId: listPermissionProfiles
+      responses:
+        "200":
+          description: Supported per-session Codex access mappings.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [permissionProfiles]
+                properties:
+                  permissionProfiles:
+                    type: array
+                    items: { $ref: "#/components/schemas/PermissionProfile" }
+  /pairings:
+    post:
+      tags: [Host]
+      operationId: createPairing
+      responses:
+        "201":
+          description: One-use code valid for ten minutes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, expiresAt]
+                properties:
+                  code: { type: string }
+                  expiresAt: { type: number }
+  /pairings/redeem:
+    post:
+      tags: [Host]
+      security: []
+      operationId: redeemPairing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, deviceName]
+              properties:
+                code: { type: string, minLength: 6, maxLength: 32 }
+                deviceName: { type: string, minLength: 1, maxLength: 80 }
+      responses:
+        "201":
+          description: Device credential. The raw token is returned only here.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device, token, host]
+                properties:
+                  device: { $ref: "#/components/schemas/PairedDevice" }
+                  token: { type: string, writeOnly: true }
+                  host: { $ref: "#/components/schemas/CoFleetHostInfo" }
+        "410": { $ref: "#/components/responses/Gone" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /devices:
+    get:
+      tags: [Host]
+      operationId: listDevices
+      responses:
+        "200":
+          description: Paired devices; bearer token material is never included.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: "#/components/schemas/PairedDevice" }
+  /devices/{deviceID}:
+    delete:
+      tags: [Host]
+      operationId: revokeDevice
+      parameters:
+        - $ref: "#/components/parameters/DeviceID"
+      responses:
+        "200":
+          description: Device revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /devices/{deviceID}/rotate:
+    post:
+      tags: [Host]
+      operationId: rotateDeviceToken
+      parameters:
+        - $ref: "#/components/parameters/DeviceID"
+      responses:
+        "200":
+          description: The caller's old token is immediately invalidated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device, token]
+                properties:
+                  device: { $ref: "#/components/schemas/PairedDevice" }
+                  token: { type: string, writeOnly: true }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /account:
+    get:
+      tags: [Host]
+      operationId: readCodexAccount
+      responses:
+        "200":
+          description: Result of Codex account/read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountEnvelope" }
+        "503": { $ref: "#/components/responses/CodexUnavailable" }
+  /account/limits:
+    get:
+      tags: [Host]
+      operationId: readCodexAccountLimits
+      description: >-
+        Reads the current Codex rate-limit windows. This endpoint never invokes
+        a reset-credit consumption method.
+      responses:
+        "200":
+          description: Bounded result of Codex account/rateLimits/read.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [limits]
+                properties:
+                  limits: { $ref: "#/components/schemas/CoFleetAccountLimits" }
+        "503": { $ref: "#/components/responses/CodexUnavailable" }
+  /account/login:
+    post:
+      tags: [Host]
+      operationId: startCodexLogin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [chatgpt, chatgptDeviceCode]
+                  default: chatgpt
+      responses:
+        "200":
+          description: Official Codex ChatGPT or device-code login challenge.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [login]
+                properties:
+                  login: { $ref: "#/components/schemas/CodexLoginChallenge" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /models:
+    get:
+      tags: [Host]
+      operationId: listCodexModels
+      responses:
+        "200":
+          description: Live models and capabilities from Codex model/list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models]
+                properties:
+                  models:
+                    type: array
+                    items: { $ref: "#/components/schemas/CoFleetModel" }
+  /events:
+    get:
+      tags: [Host]
+      operationId: streamEvents
+      description: >-
+        Durable, bounded SSE stream. Resume with Last-Event-ID. When the cursor
+        predates retained history, resetRequired is emitted before retained events.
+        Conversation streams expose only provider-neutral turn.updated, turn.item,
+        interaction.pending, interaction.resolved, interaction.expired, and
+        stream.reset envelopes; raw Codex app-server notifications are never exposed.
+      parameters:
+        - $ref: "#/components/parameters/LastEventID"
+        - name: once
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Server-sent events.
+          content:
+            text/event-stream:
+              schema: { type: string }
+  /directories:
+    get:
+      tags: [Workspace]
+      operationId: browseDirectories
+      parameters:
+        - name: path
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: showHidden
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Paginated directories only, with canonical symlink targets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectoryPage" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Workspace]
+      operationId: createDirectory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parentPath, name]
+              properties:
+                parentPath: { type: string }
+                name: { type: string, minLength: 1, maxLength: 255 }
+      responses:
+        "201":
+          description: One folder created beneath the canonical parent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectoryEnvelope" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /projects:
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      responses:
+        "200":
+          description: Host-registered projects.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items: { $ref: "#/components/schemas/CoFleetProject" }
+    post:
+      tags: [Projects]
+      operationId: registerProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rootPath]
+              properties:
+                rootPath: { type: string }
+                name: { type: string, maxLength: 120 }
+      responses:
+        "201":
+          description: Registered canonical host/root pair.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project]
+                properties:
+                  project: { $ref: "#/components/schemas/CoFleetProject" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /projects/suggestions:
+    get:
+      tags: [Projects]
+      operationId: discoverRecentProjects
+      description: Uses paginated thread/list metadata and never reads transcripts.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Deduplicated recent Codex working directories.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectSuggestionPage" }
+  /projects/{projectID}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      tags: [Projects]
+      operationId: getProject
+      responses:
+        "200":
+          description: Registered project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Projects]
+      operationId: renameProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 120 }
+      responses:
+        "200":
+          description: Project card renamed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectEnvelope" }
+    delete:
+      tags: [Projects]
+      operationId: unregisterProject
+      responses:
+        "200":
+          description: Card and host metadata removed; the directory is never deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectRemovalEnvelope" }
+  /projects/{projectID}/sessions:
+    get:
+      tags: [Sessions]
+      operationId: listProjectSessions
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/Cursor"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 5 }
+        - name: archived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: A metadata-only Codex thread/list page.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/CoFleetSessionSummary" }
+                  nextCursor: { type: [string, "null"] }
+  /projects/{projectID}/source-control:
+    get:
+      tags: [Projects]
+      operationId: getSourceControlStatus
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: Short-cached local Git or Plastic status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sourceControl]
+                properties:
+                  sourceControl: { $ref: "#/components/schemas/CoFleetSourceControlStatus" }
+  /projects/{projectID}/notes:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      tags: [Workspace]
+      operationId: listProjectNotes
+      responses:
+        "200":
+          description: Revisioned project notes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NoteListEnvelope" }
+    post:
+      tags: [Workspace]
+      operationId: createProjectNote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NoteWrite" }
+      responses:
+        "201":
+          description: Note created with an ETag.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RequiredNoteEnvelope" }
+  /projects/{projectID}/note:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      tags: [Workspace]
+      operationId: getPrimaryProjectNote
+      responses:
+        "200":
+          description: Most recently updated note or null.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NoteEnvelope" }
+    put:
+      tags: [Workspace]
+      operationId: putPrimaryProjectNote
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NoteWrite" }
+      responses:
+        "200":
+          description: Existing primary note updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RequiredNoteEnvelope" }
+        "201":
+          description: Primary note created when absent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RequiredNoteEnvelope" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+  /projects/{projectID}/todos:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      tags: [Workspace]
+      operationId: listProjectTodos
+      responses:
+        "200":
+          description: Ordered structured todos.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TodoListEnvelope" }
+    post:
+      tags: [Workspace]
+      operationId: createProjectTodo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TodoWrite" }
+      responses:
+        "201":
+          description: Todo created with an ETag.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TodoEnvelope" }
+  /projects/{projectID}/pet:
+    put:
+      tags: [Pets]
+      operationId: selectProjectPet
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [petID]
+              properties:
+                petID: { type: string }
+      responses:
+        "200":
+          description: Imported pet selected for the project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectEnvelope" }
+  /sessions:
+    post:
+      tags: [Sessions]
+      operationId: createSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionOpen" }
+      responses:
+        "201":
+          description: Canonical Codex thread created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session]
+                properties:
+                  session: { $ref: "#/components/schemas/CoFleetSessionSummary" }
+  /sessions/{sessionID}:
+    patch:
+      tags: [Sessions]
+      operationId: renameSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Canonical Codex thread renamed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionRenameResult" }
+  /sessions/{sessionID}/transcript:
+    get:
+      tags: [Sessions]
+      operationId: readTranscript
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: Canonical session and normalized turns/items from thread/read.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session, turns]
+                properties:
+                  session: { $ref: "#/components/schemas/CoFleetSessionSummary" }
+                  turns:
+                    type: array
+                    items: { $ref: "#/components/schemas/CoFleetTurn" }
+  /sessions/{sessionID}/events:
+    get:
+      tags: [Sessions]
+      operationId: streamSessionEvents
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+        - $ref: "#/components/parameters/LastEventID"
+      responses:
+        "200":
+          description: SSE stream filtered to one host-scoped session.
+          content:
+            text/event-stream:
+              schema: { type: string }
+  /sessions/{sessionID}/resume:
+    post:
+      tags: [Sessions]
+      operationId: resumeSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionOpen" }
+      responses:
+        "200":
+          description: Codex thread resumed at the registered project root.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionEnvelope" }
+  /sessions/{sessionID}/fork:
+    post:
+      tags: [Sessions]
+      operationId: forkSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionOpen" }
+      responses:
+        "200":
+          description: Canonical Codex thread forked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionEnvelope" }
+  /sessions/{sessionID}/archive:
+    post:
+      tags: [Sessions]
+      operationId: archiveSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: Codex thread archived.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionArchiveResult" }
+  /sessions/{sessionID}/unarchive:
+    post:
+      tags: [Sessions]
+      operationId: unarchiveSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: Codex thread unarchived.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionArchiveResult" }
+  /sessions/{sessionID}/turns:
+    post:
+      tags: [Turns]
+      operationId: startTurn
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TurnStart" }
+      responses:
+        "201":
+          description: Canonical Codex turn started exactly once.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [turn]
+                properties:
+                  turn: { $ref: "#/components/schemas/CoFleetTurn" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+  /sessions/{sessionID}/turns/{turnID}/steer:
+    post:
+      tags: [Turns]
+      operationId: steerTurn
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+        - $ref: "#/components/parameters/TurnID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TurnStart" }
+      responses:
+        "200":
+          description: Input steered into the active Codex turn.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TurnActionEnvelope" }
+  /sessions/{sessionID}/turns/{turnID}/interrupt:
+    post:
+      tags: [Turns]
+      operationId: interruptTurn
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+        - $ref: "#/components/parameters/TurnID"
+      responses:
+        "200":
+          description: Active Codex turn interrupted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TurnActionEnvelope" }
+  /interactions:
+    get:
+      tags: [Interactions]
+      operationId: listInteractions
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [pending, resolved, expired]
+            default: pending
+      responses:
+        "200":
+          description: Host-scoped Codex approvals, questions, and elicitation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [interactions]
+                properties:
+                  interactions:
+                    type: array
+                    items: { $ref: "#/components/schemas/CoFleetInteraction" }
+  /interactions/{interactionID}/resolve:
+    post:
+      tags: [Interactions]
+      operationId: resolveInteraction
+      parameters:
+        - $ref: "#/components/parameters/InteractionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                decision:
+                  type: string
+                  enum: [allowOnce, allowForSession, deny, denyAndStop, submitAnswer, accept, decline, cancel]
+                answers: { type: object, additionalProperties: true }
+                action: { type: string, enum: [accept, decline, cancel] }
+                content: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Interaction resolved exactly once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InteractionEnvelope" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "410": { $ref: "#/components/responses/Gone" }
+  /notes/{noteID}:
+    parameters:
+      - $ref: "#/components/parameters/NoteID"
+    get:
+      tags: [Workspace]
+      operationId: getNote
+      responses:
+        "200":
+          description: Revisioned Markdown note with ETag.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RequiredNoteEnvelope" }
+    patch:
+      tags: [Workspace]
+      operationId: updateNote
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NoteWrite" }
+      responses:
+        "200":
+          description: Note updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RequiredNoteEnvelope" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+    delete:
+      tags: [Workspace]
+      operationId: deleteNote
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: Note removed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RequiredNoteEnvelope" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+  /todos/{todoID}:
+    parameters:
+      - $ref: "#/components/parameters/TodoID"
+    get:
+      tags: [Workspace]
+      operationId: getTodo
+      responses:
+        "200":
+          description: Revisioned todo with ETag.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TodoEnvelope" }
+    patch:
+      tags: [Workspace]
+      operationId: updateTodo
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TodoWrite" }
+      responses:
+        "200":
+          description: Todo updated or reordered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TodoEnvelope" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+    delete:
+      tags: [Workspace]
+      operationId: deleteTodo
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: Todo removed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TodoEnvelope" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+  /pets:
+    get:
+      tags: [Pets]
+      operationId: listPets
+      responses:
+        "200":
+          description: Validated pets copied into host-owned storage.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pets]
+                properties:
+                  pets:
+                    type: array
+                    items: { $ref: "#/components/schemas/CoFleetPetManifest" }
+    post:
+      tags: [Pets]
+      operationId: importPet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourcePath]
+              properties:
+                sourcePath: { type: string }
+      responses:
+        "201":
+          description: Valid v1/v2 package imported and content-deduplicated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetEnvelope" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /pets/discover:
+    get:
+      tags: [Pets]
+      operationId: discoverPets
+      responses:
+        "200":
+          description: Valid packages found beneath ~/.codex/pets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DiscoveredPetListEnvelope" }
+  /pets/{petID}/assets/{assetName}:
+    get:
+      tags: [Pets]
+      operationId: getPetAsset
+      parameters:
+        - $ref: "#/components/parameters/PetID"
+        - name: assetName
+          in: path
+          required: true
+          schema: { type: string, enum: [pet.json, spritesheet.png, spritesheet.webp] }
+      responses:
+        "200":
+          description: Bounded imported manifest or sprite atlas.
+          content:
+            application/json: { schema: { type: object } }
+            image/png: { schema: { type: string, contentEncoding: binary } }
+            image/webp: { schema: { type: string, contentEncoding: binary } }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: CoFleet paired-device token
+  parameters:
+    ProjectID: { name: projectID, in: path, required: true, schema: { type: string } }
+    SessionID: { name: sessionID, in: path, required: true, schema: { type: string } }
+    TurnID: { name: turnID, in: path, required: true, schema: { type: string } }
+    InteractionID: { name: interactionID, in: path, required: true, schema: { type: string } }
+    DeviceID: { name: deviceID, in: path, required: true, schema: { type: string } }
+    NoteID: { name: noteID, in: path, required: true, schema: { type: string } }
+    TodoID: { name: todoID, in: path, required: true, schema: { type: string } }
+    PetID: { name: petID, in: path, required: true, schema: { type: string } }
+    Cursor: { name: cursor, in: query, schema: { type: string } }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+    LastEventID: { name: Last-Event-ID, in: header, schema: { type: integer, minimum: 0 } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 8, maxLength: 128 } }
+    IfMatch: { name: If-Match, in: header, required: true, schema: { type: string } }
+  responses:
+    Unauthorized:
+      description: Missing, invalid, or revoked paired-device token.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    Forbidden:
+      description: The authenticated device or service account cannot perform the operation.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    NotFound:
+      description: The host-scoped resource was not found.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    Conflict:
+      description: Duplicate, already resolved, or idempotency conflict.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    Gone:
+      description: Pairing code or interaction expired.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    Unprocessable:
+      description: Request validation failed.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    PreconditionFailed:
+      description: ETag revision conflict.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    PreconditionRequired:
+      description: If-Match or Idempotency-Key is required.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    RateLimited:
+      description: Pairing redemption rate limit exceeded.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    CodexUnavailable:
+      description: Codex is absent, restarting, or timed out.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: object, additionalProperties: true }
+    DeviceEnvelope:
+      type: object
+      required: [device]
+      properties:
+        device: { $ref: "#/components/schemas/PairedDevice" }
+    AccountEnvelope:
+      type: object
+      required: [account]
+      properties:
+        account: { $ref: "#/components/schemas/CodexAccountRead" }
+    CodexAccountRead:
+      type: object
+      required: [account, requiresOpenaiAuth]
+      properties:
+        account:
+          anyOf:
+            - $ref: "#/components/schemas/CodexAccount"
+            - { type: "null" }
+        requiresOpenaiAuth: { type: boolean }
+      additionalProperties: true
+    CodexAccount:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string }
+        email: { type: [string, "null"] }
+        planType: { type: [string, "null"] }
+      additionalProperties: true
+    DirectoryEnvelope:
+      type: object
+      required: [directory]
+      properties:
+        directory: { $ref: "#/components/schemas/DirectoryEntry" }
+    ProjectEnvelope:
+      type: object
+      required: [project]
+      properties:
+        project: { $ref: "#/components/schemas/CoFleetProject" }
+    ProjectRemovalEnvelope:
+      type: object
+      required: [project, directoryDeleted]
+      properties:
+        project: { $ref: "#/components/schemas/CoFleetProject" }
+        directoryDeleted: { const: false }
+    ProjectSuggestionPage:
+      type: object
+      required: [suggestions]
+      properties:
+        suggestions:
+          type: array
+          items: { $ref: "#/components/schemas/ProjectSuggestion" }
+        nextCursor: { type: [string, "null"] }
+    ProjectSuggestion:
+      type: object
+      required: [rootPath, name, lastActivityAt, latestSession]
+      properties:
+        rootPath: { type: string }
+        name: { type: string }
+        lastActivityAt: { type: [number, string] }
+        latestSession: { $ref: "#/components/schemas/CoFleetSessionSummary" }
+    NoteListEnvelope:
+      type: object
+      required: [notes]
+      properties:
+        notes:
+          type: array
+          items: { $ref: "#/components/schemas/CoFleetNote" }
+    NoteEnvelope:
+      type: object
+      required: [note]
+      properties:
+        note:
+          anyOf:
+            - $ref: "#/components/schemas/CoFleetNote"
+            - { type: "null" }
+    RequiredNoteEnvelope:
+      type: object
+      required: [note]
+      properties:
+        note: { $ref: "#/components/schemas/CoFleetNote" }
+    TodoListEnvelope:
+      type: object
+      required: [todos]
+      properties:
+        todos:
+          type: array
+          items: { $ref: "#/components/schemas/CoFleetTodoItem" }
+    TodoEnvelope:
+      type: object
+      required: [todo]
+      properties:
+        todo: { $ref: "#/components/schemas/CoFleetTodoItem" }
+    SessionEnvelope:
+      type: object
+      required: [session]
+      properties:
+        session: { $ref: "#/components/schemas/CoFleetSessionSummary" }
+    SessionRenameResult:
+      type: object
+      required: [sessionID, title]
+      properties:
+        sessionID: { type: string }
+        title: { type: string }
+    SessionArchiveResult:
+      type: object
+      required: [sessionID, archived]
+      properties:
+        sessionID: { type: string }
+        archived: { type: boolean }
+    TurnActionEnvelope:
+      type: object
+      required: [turn]
+      properties:
+        turn: { $ref: "#/components/schemas/CoFleetTurnAction" }
+    CoFleetTurnAction:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        status: { type: [string, "null"] }
+        error: { type: [object, string, "null"], additionalProperties: true }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/CoFleetTurnItem" }
+      additionalProperties: true
+    InteractionEnvelope:
+      type: object
+      required: [interaction]
+      properties:
+        interaction: { $ref: "#/components/schemas/CoFleetInteraction" }
+    PetEnvelope:
+      type: object
+      required: [pet]
+      properties:
+        pet: { $ref: "#/components/schemas/CoFleetPetManifest" }
+    DiscoveredPetListEnvelope:
+      type: object
+      required: [pets]
+      properties:
+        pets:
+          type: array
+          items: { $ref: "#/components/schemas/DiscoveredPet" }
+    DiscoveredPet:
+      type: object
+      required: [sourcePath, displayName, description, spriteVersionNumber, digest]
+      properties:
+        sourcePath: { type: string }
+        displayName: { type: string }
+        description: { type: string }
+        spriteVersionNumber: { type: integer, enum: [1, 2] }
+        digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+    CoFleetHostInfo:
+      type: object
+      required: [id, displayName, platform, homePath, serviceVersion, codexAvailable, transport, publicExposureAllowed, capabilities]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        platform: { type: string }
+        platformVersion: { type: string }
+        architecture: { type: string }
+        homePath: { type: string }
+        serviceVersion: { type: string }
+        codexAvailable: { type: boolean }
+        transport: { type: string, enum: [loopback, tailscale-serve] }
+        publicExposureAllowed: { const: false }
+        capabilities: { type: object, additionalProperties: true }
+    CoFleetAccountLimits:
+      type: object
+      description: >-
+        Bounded pass-through of Codex rate-limit data. Fields may expand with
+        the installed Codex app-server version.
+      additionalProperties: true
+    CodexLoginChallenge:
+      type: object
+      required: [type, loginId]
+      properties:
+        type: { type: string, enum: [chatgpt, chatgptDeviceCode] }
+        loginId: { type: string }
+        authUrl: { type: string, format: uri }
+        userCode: { type: string }
+        verificationUrl: { type: string, format: uri }
+      anyOf:
+        - required: [authUrl]
+        - required: [userCode, verificationUrl]
+    PairedDevice:
+      type: object
+      required: [id, name, createdAt, lastSeenAt, revoked]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        createdAt: { type: number }
+        lastSeenAt: { type: number }
+        revoked: { type: boolean }
+        revokedAt: { type: [number, "null"] }
+    PermissionProfile:
+      type: object
+      required: [id, label, dangerous, approvalPolicy, approvalsReviewer, sandbox]
+      properties:
+        id: { type: string, enum: [ask_for_approval, approve_for_me, full_access] }
+        label: { type: string }
+        dangerous: { type: boolean }
+        approvalPolicy: { type: string, enum: [untrusted, on-request, never] }
+        approvalsReviewer: { type: string, enum: [user, auto_review] }
+        sandbox: { type: string, enum: [workspace-write, danger-full-access] }
+    CoFleetModel:
+      type: object
+      required: [id, displayName, isDefault, inputModalities, reasoningEfforts, serviceTiers]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        isDefault: { type: boolean }
+        inputModalities: { type: array, items: { type: string } }
+        reasoningEfforts: { type: array, items: { type: string } }
+        serviceTiers: { type: array, items: { type: string } }
+        contextWindow: { type: [integer, "null"] }
+    DirectoryEntry:
+      type: object
+      required: [name, path, canonicalPath, isSymlink, readable]
+      properties:
+        name: { type: string }
+        path: { type: string }
+        canonicalPath: { type: string }
+        isSymlink: { type: boolean }
+        readable: { type: boolean }
+    DirectoryPage:
+      type: object
+      required: [path, directories]
+      properties:
+        path: { type: string }
+        parentPath: { type: [string, "null"] }
+        directories: { type: array, items: { $ref: "#/components/schemas/DirectoryEntry" } }
+        nextCursor: { type: [string, "null"] }
+    CoFleetProject:
+      type: object
+      required: [id, name, rootPath, canonicalPath, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        rootPath: { type: string }
+        canonicalPath: { type: string }
+        petID: { type: [string, "null"] }
+        sourceControl:
+          anyOf:
+            - $ref: "#/components/schemas/CoFleetSourceControlStatus"
+            - { type: "null" }
+        createdAt: { type: number }
+        updatedAt: { type: number }
+    CoFleetSourceControlStatus:
+      type: object
+      required: [kind, state, branch, detail, observedAt]
+      properties:
+        kind: { type: string, enum: [none, git, plastic] }
+        state:
+          type: string
+          enum: [unavailable, clean, dirty, staged, unpushed, draftPullRequest, openPullRequest]
+        branch: { type: [string, "null"] }
+        detail: { type: [string, "null"] }
+        observedAt: { type: number }
+    CoFleetSessionSummary:
+      type: object
+      required: [id, hostID, title, archived, provider]
+      properties:
+        id: { type: string }
+        hostID: { type: string }
+        projectID: { type: [string, "null"] }
+        title: { type: string }
+        cwd: { type: [string, "null"] }
+        preview: { type: [string, "null"] }
+        createdAt: { type: [number, string, "null"] }
+        updatedAt: { type: [number, string, "null"] }
+        archived: { type: boolean }
+        model: { type: [string, "null"] }
+        accessLevel: { type: [string, "null"] }
+        reasoningEffort: { type: [string, "null"] }
+        serviceTier: { type: [string, "null"] }
+        provider: { const: codex }
+    CoFleetTurn:
+      type: object
+      required: [id, items]
+      properties:
+        id: { type: string }
+        status: { type: [string, "null"] }
+        error: { type: [object, string, "null"], additionalProperties: true }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/CoFleetTurnItem" }
+    CoFleetTurnItem:
+      type: object
+      required: [id, turnID, type, role]
+      properties:
+        id: { type: string }
+        turnID: { type: string }
+        type: { type: string }
+        role: { type: string, enum: [user, assistant, tool] }
+        text: { type: [string, "null"] }
+        status: { type: [string, "null"] }
+        title: { type: [string, "null"] }
+        detail: { type: [string, "null"] }
+    CoFleetInteraction:
+      type: object
+      required: [id, hostID, sessionID, turnID, kind, state, title, detail, choices, questions, expiresAt]
+      properties:
+        id: { type: string }
+        hostID: { type: string }
+        sessionID: { type: string }
+        turnID: { type: string }
+        kind:
+          type: string
+          enum: [commandApproval, fileApproval, permissionApproval, question, mcpElicitation]
+        state: { type: string, enum: [pending, resolved, expired] }
+        title: { type: string }
+        detail: { type: string }
+        choices:
+          type: array
+          items:
+            type: string
+            enum: [allowOnce, allowForSession, deny, denyAndStop, submitAnswer, accept, decline, cancel]
+        questions:
+          type: array
+          items: { $ref: "#/components/schemas/CoFleetInteractionQuestion" }
+        expiresAt: { type: string, format: date-time }
+    CoFleetInteractionQuestion:
+      type: object
+      required: [id, header, prompt, options, allowsFreeform, isSecret]
+      properties:
+        id: { type: string }
+        header: { type: string }
+        prompt: { type: string }
+        options:
+          type: array
+          items:
+            type: object
+            required: [label]
+            properties:
+              label: { type: string }
+              detail: { type: [string, "null"] }
+        allowsFreeform: { type: boolean }
+        isSecret: { type: boolean }
+    CoFleetTurnEventEnvelope:
+      oneOf:
+        - type: object
+          required: [type, turn]
+          properties:
+            type: { const: turn.updated }
+            turn: { type: object, additionalProperties: true }
+        - type: object
+          required: [type, item]
+          properties:
+            type: { const: turn.item }
+            item: { type: object, additionalProperties: true }
+        - type: object
+          required: [type, interaction]
+          properties:
+            type: { const: interaction.pending }
+            interaction: { $ref: "#/components/schemas/CoFleetInteraction" }
+        - type: object
+          required: [type, interactionID]
+          properties:
+            type: { type: string, enum: [interaction.resolved, interaction.expired] }
+            interactionID: { type: string }
+        - type: object
+          required: [type]
+          properties:
+            type: { const: stream.reset }
+    CoFleetNote:
+      type: object
+      required: [id, projectID, title, markdown, revision, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        projectID: { type: string }
+        sessionID: { type: [string, "null"] }
+        title: { type: string }
+        markdown: { type: string }
+        revision: { type: integer, minimum: 1 }
+        createdAt: { type: number }
+        updatedAt: { type: number }
+    CoFleetTodoItem:
+      type: object
+      required: [id, projectID, text, completed, position, revision, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        projectID: { type: string }
+        sessionID: { type: [string, "null"] }
+        text: { type: string }
+        completed: { type: boolean }
+        position: { type: integer, minimum: 0 }
+        revision: { type: integer, minimum: 1 }
+        createdAt: { type: number }
+        updatedAt: { type: number }
+    CoFleetPetManifest:
+      type: object
+      required: [id, displayName, description, spriteVersionNumber, manifest, digest]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        description: { type: string }
+        spriteVersionNumber: { type: integer, enum: [1, 2] }
+        manifest: { type: object, additionalProperties: true }
+        digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+        sourcePath: { type: string }
+        storagePath: { type: string }
+        createdAt: { type: number }
+    SessionOpen:
+      type: object
+      required: [projectID]
+      properties:
+        projectID: { type: string }
+        accessLevel: { type: string, enum: [ask_for_approval, approve_for_me, full_access], default: ask_for_approval }
+        model: { type: string }
+        reasoningEffort: { type: string }
+        serviceTier: { type: string }
+    TurnStart:
+      type: object
+      properties:
+        message: { type: string, minLength: 1 }
+        input:
+          oneOf:
+            - { type: string, minLength: 1 }
+            - type: array
+              minItems: 1
+              items:
+                oneOf:
+                  - type: object
+                    required: [type, text]
+                    properties:
+                      type: { const: text }
+                      text: { type: string }
+                  - type: object
+                    required: [type, url]
+                    properties:
+                      type: { const: image }
+                      url: { type: string, format: uri }
+                  - type: object
+                    required: [type, path]
+                    properties:
+                      type: { const: localImage }
+                      path: { type: string }
+        projectID: { type: string, description: Required for localImage confinement and the first turn of a discovered session without saved settings. }
+        accessLevel: { type: string, enum: [ask_for_approval, approve_for_me, full_access] }
+        model: { type: string }
+        reasoningEffort: { type: string }
+        serviceTier: { type: string }
+    NoteWrite:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        markdown: { type: string, maxLength: 1000000 }
+        sessionID: { type: string }
+    TodoWrite:
+      type: object
+      properties:
+        text: { type: string, minLength: 1, maxLength: 2000 }
+        completed: { type: boolean }
+        position: { type: integer, minimum: 0, maximum: 1000000 }
+        sessionID: { type: string }

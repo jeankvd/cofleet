@@ -1,0 +1,57 @@
+# Apple and Xcode
+.DS_Store
+DerivedData/
+.build/
+build/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.moved-aside
+
+# Local signing and configuration
+Config/Local.xcconfig
+Config/private-terms.local.txt
+Config/private-terms.local
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.cer
+*.key
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.coverage
+htmlcov/
+.pytest_cache/
+*.egg-info/
+
+# Host runtime state
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.pid
+*.sock
+*.log
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+auth.json
+secrets.json
+tokens.json
+
+# Editors
+.idea/
+.vscode/
+*~
+*.swp
+
+# Local test and install outputs
+.artifacts/
+.reports/
+.tmp/

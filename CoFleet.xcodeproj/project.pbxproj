@@ -1,0 +1,1302 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		01849EE5205FABB2E72EC816 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B1DD5193F6DD52AE3AFB2087 /* PrivacyInfo.xcprivacy */; };
+		052CA911DA935CB16356AD8D /* CoFleetCore in Frameworks */ = {isa = PBXBuildFile; productRef = 1F14E243CB9D9E31AFEA02F6 /* CoFleetCore */; };
+		09F7D94278C7E94B38CA8EFF /* CoFleetCodex in Frameworks */ = {isa = PBXBuildFile; productRef = 0BA0197DAB8D5F6B70A3A03E /* CoFleetCodex */; };
+		0D8CD8D9B1F85B9A7C0E1DE6 /* CoFleetSharedFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A870C67BE0ECF2C84058453A /* CoFleetSharedFiles.swift */; };
+		100446B097ABCF4906849AFB /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B1DD5193F6DD52AE3AFB2087 /* PrivacyInfo.xcprivacy */; };
+		10AB096AA0945DAC6185293F /* CoFleetTransport in Frameworks */ = {isa = PBXBuildFile; productRef = 4EBE13A54C354803FECD67A9 /* CoFleetTransport */; };
+		1C7B6306F7E7E3828B3E0624 /* CoFleetTransport in Frameworks */ = {isa = PBXBuildFile; productRef = 79881B255ECB2EA3C7B406F0 /* CoFleetTransport */; };
+		223FEEA596BF47FA4BDE0785 /* watchOS.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8DFC67DEB2CF754598E1FC72 /* watchOS.xcassets */; };
+		24B6A00170A6B5901A783297 /* CoFleetWatchRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 774AFEF41E68DDED586E1FBB /* CoFleetWatchRelay.swift */; };
+		277C738AAA1BD869228D859A /* CoFleetUI in Frameworks */ = {isa = PBXBuildFile; productRef = F800DD2D8826C947E7EF5B0F /* CoFleetUI */; };
+		2B3C2262F87038EAB5CEF7A7 /* CoFleetTransport in Frameworks */ = {isa = PBXBuildFile; productRef = 6A73316F670C547D453F71A3 /* CoFleetTransport */; };
+		33C0C9C8F2B108A54392FF41 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B1DD5193F6DD52AE3AFB2087 /* PrivacyInfo.xcprivacy */; };
+		35EE6BF7852CFB010DBB1D80 /* CoFleetMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F953D32073E1B278195AB838 /* CoFleetMacApp.swift */; };
+		37A23A3196C305281BB6393C /* CoFleetIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 537C535FE2ADA5EBEF194D94 /* CoFleetIOSApp.swift */; };
+		403E29A1910B89B4A1638601 /* CoFleetMacUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBF8D13FDD8C6B45459045F7 /* CoFleetMacUITests.swift */; };
+		505E1D899FDC0BD6D4445C53 /* CoFleetAppRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32EE7F99C3005B0D645065E3 /* CoFleetAppRepository.swift */; };
+		52BD50F5444965FD4C1A7965 /* CoFleetSharedFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A870C67BE0ECF2C84058453A /* CoFleetSharedFiles.swift */; };
+		585D4AB85110CEAAC7A534B7 /* CoFleetAppController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6031DA5443BB61CF54C9201D /* CoFleetAppController.swift */; };
+		5C5B9C4CDB171BEDEA69B1ED /* CoFleetAppController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6031DA5443BB61CF54C9201D /* CoFleetAppController.swift */; };
+		5E53F2147099CC08B63A6BC9 /* CoFleetWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65DE1A211B5695FDA7D77857 /* CoFleetWidgets.swift */; };
+		602BC86F0403D3784EAA1484 /* CoFleetUI in Frameworks */ = {isa = PBXBuildFile; productRef = 4E181F94BA6182807B693B6B /* CoFleetUI */; };
+		615F6A72013089E132E7592A /* CoFleetWatchWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0FCC1123DED48705077225DC /* CoFleetWatchWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		61E2CCE8A56E13C2362C39CD /* CoFleetUI in Frameworks */ = {isa = PBXBuildFile; productRef = 6E6C818F47E636D48E5E42F5 /* CoFleetUI */; };
+		6437EE66D21D5029B019D78C /* CoFleetCore in Frameworks */ = {isa = PBXBuildFile; productRef = D7E21FF37F209B205BFABBF5 /* CoFleetCore */; };
+		6C7AD1EFBC01E6FE12B633FA /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B1DD5193F6DD52AE3AFB2087 /* PrivacyInfo.xcprivacy */; };
+		720D91A4EBBCAD2F9D7E83F7 /* CoFleetCodex in Frameworks */ = {isa = PBXBuildFile; productRef = DA7EA88448CAD4BFC8E233C8 /* CoFleetCodex */; };
+		7DDA360E3AAA79BB397388F5 /* CoFleetCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9799B3C3DCD3BBFD4B75A81B /* CoFleetCore */; };
+		90D71808744562172DF236C2 /* CoFleetAppController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6031DA5443BB61CF54C9201D /* CoFleetAppController.swift */; };
+		92C7E5C576F320016DCCC4E9 /* SharedAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5C9EDA867EAE79FFE7F69099 /* SharedAssets.xcassets */; };
+		95616EC5597154C6405C937E /* CoFleetWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 19F18C9C48163D554BC09B60 /* CoFleetWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		99C856EB67E52D95893EEFAB /* SharedAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5C9EDA867EAE79FFE7F69099 /* SharedAssets.xcassets */; };
+		A396AE1F62DAE65FAE92E95B /* macOS.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FEC18805BFDB4E6AB6A64389 /* macOS.xcassets */; };
+		AC40393963F122C481F5DF2B /* CoFleetWatchWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71FC68D0D60F41E5C52B173F /* CoFleetWatchWidgets.swift */; };
+		B285CE87B3D9837CA37C87C5 /* CoFleetIOSUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A89541BC761F1DF2070A5664 /* CoFleetIOSUITests.swift */; };
+		B4D17EDFD12B0B68642AE41A /* CoFleetSharedFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A870C67BE0ECF2C84058453A /* CoFleetSharedFiles.swift */; };
+		B55E6D849039A90056A739C0 /* SharedAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5C9EDA867EAE79FFE7F69099 /* SharedAssets.xcassets */; };
+		BB4F7DDC2DCAD68155C47087 /* CoFleetAppRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32EE7F99C3005B0D645065E3 /* CoFleetAppRepository.swift */; };
+		BCE219ABFFC469AAA032D535 /* CoFleetWatchRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 774AFEF41E68DDED586E1FBB /* CoFleetWatchRelay.swift */; };
+		C397A42C66D8E6BBEB32326F /* CoFleetCodex in Frameworks */ = {isa = PBXBuildFile; productRef = 116E4ACD55D63D261A6390CA /* CoFleetCodex */; };
+		C461A3F32BDFC55D8541C4C0 /* iOS.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0A9FB13DEF9BDD06582888A1 /* iOS.xcassets */; };
+		CAE062FE491002F4D8134863 /* CoFleetUI in Frameworks */ = {isa = PBXBuildFile; productRef = CBCCA7480C01DBA59649BC54 /* CoFleetUI */; };
+		CCB21AB6F9DFF663F1760D97 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B1DD5193F6DD52AE3AFB2087 /* PrivacyInfo.xcprivacy */; };
+		CF3BD5AC3261D2ECF56F46AA /* SharedAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5C9EDA867EAE79FFE7F69099 /* SharedAssets.xcassets */; };
+		D7A493B9F795C8BDD93B3679 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = A44D127E0CEEF5FD7396E719 /* LICENSE */; };
+		DBB56DEC04E71EAFC7EC90A6 /* CoFleetUI in Frameworks */ = {isa = PBXBuildFile; productRef = 11ECFB77BD09AF8BCF76DABD /* CoFleetUI */; };
+		DE400FFCA4744CD0053473CB /* CoFleetWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 90A097DCA4F2F201E153B5AD /* CoFleetWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E022D28F252E38B3B5306661 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = A44D127E0CEEF5FD7396E719 /* LICENSE */; };
+		E28ABFBE4DAFB46C0F6E517D /* CoFleetAppRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32EE7F99C3005B0D645065E3 /* CoFleetAppRepository.swift */; };
+		EA524D097C2A0E1ED38CB630 /* CoFleetWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C981B3EA628BC76ACE0F9B31 /* CoFleetWatchApp.swift */; };
+		F4D37B56B017AEB9F7C1AA96 /* SharedAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5C9EDA867EAE79FFE7F69099 /* SharedAssets.xcassets */; };
+		FCAE3F8A3E71FC0C801C1E82 /* CoFleetCore in Frameworks */ = {isa = PBXBuildFile; productRef = 174916C2F5684537AA2E9087 /* CoFleetCore */; };
+		FF5E8CFA2BDCFC703C1AE0BF /* CoFleetCore in Frameworks */ = {isa = PBXBuildFile; productRef = 976BDD930CEC92CE16A69329 /* CoFleetCore */; };
+		FFA04DEAA32FFF2C187FAE3F /* CoFleetWatchRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 774AFEF41E68DDED586E1FBB /* CoFleetWatchRelay.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		60173BB2A9437B4B4CF6ED60 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BD396AF868823C2DA010BE1F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1C24053FCC7C7F92C5DD283A;
+			remoteInfo = CoFleetWatch;
+		};
+		72026AA507304067F121711A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BD396AF868823C2DA010BE1F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6AF3AF394312CDDA0C525851;
+			remoteInfo = CoFleetWatchWidgets;
+		};
+		8A8FAF8D09AF7ED42EEF5304 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BD396AF868823C2DA010BE1F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D6BC2F8AF3966189CCF9DFA4;
+			remoteInfo = CoFleetMac;
+		};
+		9E6B2C308918A2F4D9EBAA07 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BD396AF868823C2DA010BE1F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BF87296568723D89002F1D9E;
+			remoteInfo = CoFleetIOS;
+		};
+		E257847C98A0CFD3D5425542 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BD396AF868823C2DA010BE1F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8058AE70C3D30837A5953B1B;
+			remoteInfo = CoFleetWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		279AD7E9C5AD6789F8D7FE95 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				95616EC5597154C6405C937E /* CoFleetWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		555EC40B9A615D4B381584AD /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				DE400FFCA4744CD0053473CB /* CoFleetWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C8F8A7A62D76AE7891695D9 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				615F6A72013089E132E7592A /* CoFleetWatchWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0A9FB13DEF9BDD06582888A1 /* iOS.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = iOS.xcassets; sourceTree = "<group>"; };
+		0EA136230300208DC7EC3562 /* CoFleetMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CoFleetMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0FCC1123DED48705077225DC /* CoFleetWatchWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CoFleetWatchWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		1360C911A9D546F8862CF74D /* SECURITY.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = SECURITY.md; sourceTree = "<group>"; };
+		19F18C9C48163D554BC09B60 /* CoFleetWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CoFleetWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1E48A3AF6A15AAF3608886FE /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		32EE7F99C3005B0D645065E3 /* CoFleetAppRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetAppRepository.swift; sourceTree = "<group>"; };
+		3E65A1CB3F227C216EADFA71 /* CoFleetMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CoFleetMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		407B733EB9A6386DF42D252F /* CoFleetIOSUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CoFleetIOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		537C535FE2ADA5EBEF194D94 /* CoFleetIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetIOSApp.swift; sourceTree = "<group>"; };
+		580A3AE52966C5B68798D119 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		5C9EDA867EAE79FFE7F69099 /* SharedAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = SharedAssets.xcassets; sourceTree = "<group>"; };
+		6031DA5443BB61CF54C9201D /* CoFleetAppController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetAppController.swift; sourceTree = "<group>"; };
+		60EB6095952DACABE940C4B2 /* CHANGELOG.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CHANGELOG.md; sourceTree = "<group>"; };
+		65DE1A211B5695FDA7D77857 /* CoFleetWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetWidgets.swift; sourceTree = "<group>"; };
+		71FC68D0D60F41E5C52B173F /* CoFleetWatchWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetWatchWidgets.swift; sourceTree = "<group>"; };
+		774AFEF41E68DDED586E1FBB /* CoFleetWatchRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetWatchRelay.swift; sourceTree = "<group>"; };
+		7E341F7913155752E89A3CB8 /* CoFleetKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CoFleetKit; path = Packages/CoFleetKit; sourceTree = SOURCE_ROOT; };
+		8DFC67DEB2CF754598E1FC72 /* watchOS.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = watchOS.xcassets; sourceTree = "<group>"; };
+		90A097DCA4F2F201E153B5AD /* CoFleetWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = CoFleetWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A44D127E0CEEF5FD7396E719 /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
+		A870C67BE0ECF2C84058453A /* CoFleetSharedFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetSharedFiles.swift; sourceTree = "<group>"; };
+		A89541BC761F1DF2070A5664 /* CoFleetIOSUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetIOSUITests.swift; sourceTree = "<group>"; };
+		B1DD5193F6DD52AE3AFB2087 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		BA1FA00A29C856D816AEAB2C /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
+		C981B3EA628BC76ACE0F9B31 /* CoFleetWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetWatchApp.swift; sourceTree = "<group>"; };
+		C9AD9AB57A5323E743219398 /* CONTRIBUTING.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CONTRIBUTING.md; sourceTree = "<group>"; };
+		D4DEAEA1B4721986E8A898D8 /* PRIVACY.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = PRIVACY.md; sourceTree = "<group>"; };
+		EBF8D13FDD8C6B45459045F7 /* CoFleetMacUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetMacUITests.swift; sourceTree = "<group>"; };
+		F7ED93709C55A6566D4C2824 /* CoFleetIOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = CoFleetIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F953D32073E1B278195AB838 /* CoFleetMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoFleetMacApp.swift; sourceTree = "<group>"; };
+		FEC18805BFDB4E6AB6A64389 /* macOS.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = macOS.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2AC5D5278B1CB67DF0D096D4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FCAE3F8A3E71FC0C801C1E82 /* CoFleetCore in Frameworks */,
+				10AB096AA0945DAC6185293F /* CoFleetTransport in Frameworks */,
+				09F7D94278C7E94B38CA8EFF /* CoFleetCodex in Frameworks */,
+				602BC86F0403D3784EAA1484 /* CoFleetUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2EEFE0F4E127482B46C61A11 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				052CA911DA935CB16356AD8D /* CoFleetCore in Frameworks */,
+				61E2CCE8A56E13C2362C39CD /* CoFleetUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		37DFBC741F69DE3362DD118D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7DDA360E3AAA79BB397388F5 /* CoFleetCore in Frameworks */,
+				DBB56DEC04E71EAFC7EC90A6 /* CoFleetUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		556827000F42F36EF62CF2C4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FF5E8CFA2BDCFC703C1AE0BF /* CoFleetCore in Frameworks */,
+				2B3C2262F87038EAB5CEF7A7 /* CoFleetTransport in Frameworks */,
+				720D91A4EBBCAD2F9D7E83F7 /* CoFleetCodex in Frameworks */,
+				CAE062FE491002F4D8134863 /* CoFleetUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7C27B0DD0A69A55265B5C5F2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6437EE66D21D5029B019D78C /* CoFleetCore in Frameworks */,
+				1C7B6306F7E7E3828B3E0624 /* CoFleetTransport in Frameworks */,
+				C397A42C66D8E6BBEB32326F /* CoFleetCodex in Frameworks */,
+				277C738AAA1BD869228D859A /* CoFleetUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1B06401E87F13120E01F1E87 /* CoFleetWatchWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				71FC68D0D60F41E5C52B173F /* CoFleetWatchWidgets.swift */,
+			);
+			name = CoFleetWatchWidgets;
+			path = Apps/Widgets/CoFleetWatchWidgets;
+			sourceTree = "<group>";
+		};
+		1B377DB231FE87A9FC74F91D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F7ED93709C55A6566D4C2824 /* CoFleetIOS.app */,
+				407B733EB9A6386DF42D252F /* CoFleetIOSUITests.xctest */,
+				0EA136230300208DC7EC3562 /* CoFleetMac.app */,
+				3E65A1CB3F227C216EADFA71 /* CoFleetMacUITests.xctest */,
+				19F18C9C48163D554BC09B60 /* CoFleetWatch.app */,
+				0FCC1123DED48705077225DC /* CoFleetWatchWidgets.appex */,
+				90A097DCA4F2F201E153B5AD /* CoFleetWidgets.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		3CD60506B99FBBB0BAE8DE10 /* CoFleetMacUITests */ = {
+			isa = PBXGroup;
+			children = (
+				EBF8D13FDD8C6B45459045F7 /* CoFleetMacUITests.swift */,
+			);
+			name = CoFleetMacUITests;
+			path = Tests/CoFleetMacUITests;
+			sourceTree = "<group>";
+		};
+		4098C05254DE38EFD5D974FA /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				7E341F7913155752E89A3CB8 /* CoFleetKit */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+		41BE0160FB31081136237B44 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				6031DA5443BB61CF54C9201D /* CoFleetAppController.swift */,
+				32EE7F99C3005B0D645065E3 /* CoFleetAppRepository.swift */,
+				A870C67BE0ECF2C84058453A /* CoFleetSharedFiles.swift */,
+				774AFEF41E68DDED586E1FBB /* CoFleetWatchRelay.swift */,
+			);
+			name = Shared;
+			path = Apps/Shared;
+			sourceTree = "<group>";
+		};
+		5ACE1498982005CD5612816A /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				580A3AE52966C5B68798D119 /* Base.xcconfig */,
+				B1DD5193F6DD52AE3AFB2087 /* PrivacyInfo.xcprivacy */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		8578B376BB9089194BFE8A44 /* Assets */ = {
+			isa = PBXGroup;
+			children = (
+				0A9FB13DEF9BDD06582888A1 /* iOS.xcassets */,
+				FEC18805BFDB4E6AB6A64389 /* macOS.xcassets */,
+				5C9EDA867EAE79FFE7F69099 /* SharedAssets.xcassets */,
+				8DFC67DEB2CF754598E1FC72 /* watchOS.xcassets */,
+			);
+			path = Assets;
+			sourceTree = "<group>";
+		};
+		A331E215B66BDB6259EB6954 /* CoFleetIOSUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A89541BC761F1DF2070A5664 /* CoFleetIOSUITests.swift */,
+			);
+			name = CoFleetIOSUITests;
+			path = Tests/CoFleetIOSUITests;
+			sourceTree = "<group>";
+		};
+		A9B810307D8786B5433686FF /* CoFleetWatch */ = {
+			isa = PBXGroup;
+			children = (
+				C981B3EA628BC76ACE0F9B31 /* CoFleetWatchApp.swift */,
+			);
+			name = CoFleetWatch;
+			path = Apps/watchOS/CoFleetWatch;
+			sourceTree = "<group>";
+		};
+		D21B57E47D92BFB048B48C66 /* CoFleetIOS */ = {
+			isa = PBXGroup;
+			children = (
+				537C535FE2ADA5EBEF194D94 /* CoFleetIOSApp.swift */,
+			);
+			name = CoFleetIOS;
+			path = Apps/iOS/CoFleetIOS;
+			sourceTree = "<group>";
+		};
+		D3129F2C704B34A038B9D55A = {
+			isa = PBXGroup;
+			children = (
+				8578B376BB9089194BFE8A44 /* Assets */,
+				D21B57E47D92BFB048B48C66 /* CoFleetIOS */,
+				A331E215B66BDB6259EB6954 /* CoFleetIOSUITests */,
+				EB90809E9E7152618AC9F3D1 /* CoFleetMac */,
+				3CD60506B99FBBB0BAE8DE10 /* CoFleetMacUITests */,
+				A9B810307D8786B5433686FF /* CoFleetWatch */,
+				1B06401E87F13120E01F1E87 /* CoFleetWatchWidgets */,
+				F4B89E1B45CB985868E5D9B2 /* CoFleetWidgets */,
+				5ACE1498982005CD5612816A /* Config */,
+				4098C05254DE38EFD5D974FA /* Packages */,
+				41BE0160FB31081136237B44 /* Shared */,
+				60EB6095952DACABE940C4B2 /* CHANGELOG.md */,
+				C9AD9AB57A5323E743219398 /* CONTRIBUTING.md */,
+				A44D127E0CEEF5FD7396E719 /* LICENSE */,
+				D4DEAEA1B4721986E8A898D8 /* PRIVACY.md */,
+				1E48A3AF6A15AAF3608886FE /* README.md */,
+				1360C911A9D546F8862CF74D /* SECURITY.md */,
+				BA1FA00A29C856D816AEAB2C /* THIRD_PARTY_NOTICES.md */,
+				1B377DB231FE87A9FC74F91D /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EB90809E9E7152618AC9F3D1 /* CoFleetMac */ = {
+			isa = PBXGroup;
+			children = (
+				F953D32073E1B278195AB838 /* CoFleetMacApp.swift */,
+			);
+			name = CoFleetMac;
+			path = Apps/macOS/CoFleetMac;
+			sourceTree = "<group>";
+		};
+		F4B89E1B45CB985868E5D9B2 /* CoFleetWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				65DE1A211B5695FDA7D77857 /* CoFleetWidgets.swift */,
+			);
+			name = CoFleetWidgets;
+			path = Apps/Widgets/CoFleetWidgets;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0C579889E1F70B2BA3C43495 /* CoFleetIOSUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0A365E6D9223F577D2148154 /* Build configuration list for PBXNativeTarget "CoFleetIOSUITests" */;
+			buildPhases = (
+				E1D5AC6B6A1896F0EAEEB2CB /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0479805B352B1D074D45058F /* PBXTargetDependency */,
+			);
+			name = CoFleetIOSUITests;
+			packageProductDependencies = (
+			);
+			productName = CoFleetIOSUITests;
+			productReference = 407B733EB9A6386DF42D252F /* CoFleetIOSUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		1C24053FCC7C7F92C5DD283A /* CoFleetWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 171E12D0376FC9E1008337E2 /* Build configuration list for PBXNativeTarget "CoFleetWatch" */;
+			buildPhases = (
+				F33809D4D096EFFE7140BF16 /* Sources */,
+				61897015DEBEBBF7F8C391E1 /* Resources */,
+				7C27B0DD0A69A55265B5C5F2 /* Frameworks */,
+				5C8F8A7A62D76AE7891695D9 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6FD1C253040A8EDD1CE9E0DD /* PBXTargetDependency */,
+			);
+			name = CoFleetWatch;
+			packageProductDependencies = (
+				D7E21FF37F209B205BFABBF5 /* CoFleetCore */,
+				79881B255ECB2EA3C7B406F0 /* CoFleetTransport */,
+				116E4ACD55D63D261A6390CA /* CoFleetCodex */,
+				F800DD2D8826C947E7EF5B0F /* CoFleetUI */,
+			);
+			productName = CoFleetWatch;
+			productReference = 19F18C9C48163D554BC09B60 /* CoFleetWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+		31CDD0B1D200D4128D989FEE /* CoFleetMacUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4F81DB89F4C7E58A53F3F36E /* Build configuration list for PBXNativeTarget "CoFleetMacUITests" */;
+			buildPhases = (
+				AC453012B9096DC550C08A91 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AD541D3AEE636F80DF4A59D5 /* PBXTargetDependency */,
+			);
+			name = CoFleetMacUITests;
+			packageProductDependencies = (
+			);
+			productName = CoFleetMacUITests;
+			productReference = 3E65A1CB3F227C216EADFA71 /* CoFleetMacUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		6AF3AF394312CDDA0C525851 /* CoFleetWatchWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 90D2D145D11166C374035578 /* Build configuration list for PBXNativeTarget "CoFleetWatchWidgets" */;
+			buildPhases = (
+				E7DECC4D167B5E202546D435 /* Sources */,
+				2C80B194441AE3FCA807B321 /* Resources */,
+				37DFBC741F69DE3362DD118D /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CoFleetWatchWidgets;
+			packageProductDependencies = (
+				9799B3C3DCD3BBFD4B75A81B /* CoFleetCore */,
+				11ECFB77BD09AF8BCF76DABD /* CoFleetUI */,
+			);
+			productName = CoFleetWatchWidgets;
+			productReference = 0FCC1123DED48705077225DC /* CoFleetWatchWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		8058AE70C3D30837A5953B1B /* CoFleetWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E0DE05349FB6BFAC959FC3A6 /* Build configuration list for PBXNativeTarget "CoFleetWidgets" */;
+			buildPhases = (
+				6424C2214651F5DE2B6B9CBF /* Sources */,
+				52C9D6E46F644903D115A2FD /* Resources */,
+				2EEFE0F4E127482B46C61A11 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CoFleetWidgets;
+			packageProductDependencies = (
+				1F14E243CB9D9E31AFEA02F6 /* CoFleetCore */,
+				6E6C818F47E636D48E5E42F5 /* CoFleetUI */,
+			);
+			productName = CoFleetWidgets;
+			productReference = 90A097DCA4F2F201E153B5AD /* CoFleetWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		BF87296568723D89002F1D9E /* CoFleetIOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4D535E7F64128FB7F2E175F5 /* Build configuration list for PBXNativeTarget "CoFleetIOS" */;
+			buildPhases = (
+				6D5B7C0E01C28D83CDF43FBD /* Sources */,
+				0918D661F773DADF58F0802E /* Resources */,
+				2AC5D5278B1CB67DF0D096D4 /* Frameworks */,
+				555EC40B9A615D4B381584AD /* Embed Foundation Extensions */,
+				279AD7E9C5AD6789F8D7FE95 /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7CAB0E928784AB51781CA60F /* PBXTargetDependency */,
+				0BB9C969FFB73043CE82AF02 /* PBXTargetDependency */,
+			);
+			name = CoFleetIOS;
+			packageProductDependencies = (
+				174916C2F5684537AA2E9087 /* CoFleetCore */,
+				4EBE13A54C354803FECD67A9 /* CoFleetTransport */,
+				0BA0197DAB8D5F6B70A3A03E /* CoFleetCodex */,
+				4E181F94BA6182807B693B6B /* CoFleetUI */,
+			);
+			productName = CoFleetIOS;
+			productReference = F7ED93709C55A6566D4C2824 /* CoFleetIOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		D6BC2F8AF3966189CCF9DFA4 /* CoFleetMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4DCBA643536A628CC15E5182 /* Build configuration list for PBXNativeTarget "CoFleetMac" */;
+			buildPhases = (
+				5EEC0EF98FEE8695ADE279D9 /* Sources */,
+				F30B7CD136971EC2794E8CAE /* Resources */,
+				556827000F42F36EF62CF2C4 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CoFleetMac;
+			packageProductDependencies = (
+				976BDD930CEC92CE16A69329 /* CoFleetCore */,
+				6A73316F670C547D453F71A3 /* CoFleetTransport */,
+				DA7EA88448CAD4BFC8E233C8 /* CoFleetCodex */,
+				CBCCA7480C01DBA59649BC54 /* CoFleetUI */,
+			);
+			productName = CoFleetMac;
+			productReference = 0EA136230300208DC7EC3562 /* CoFleetMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		BD396AF868823C2DA010BE1F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					0C579889E1F70B2BA3C43495 = {
+						DevelopmentTeam = "$(COFLEET_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+						TestTargetID = BF87296568723D89002F1D9E;
+					};
+					1C24053FCC7C7F92C5DD283A = {
+						DevelopmentTeam = "$(COFLEET_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+					31CDD0B1D200D4128D989FEE = {
+						DevelopmentTeam = "$(COFLEET_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+						TestTargetID = D6BC2F8AF3966189CCF9DFA4;
+					};
+					6AF3AF394312CDDA0C525851 = {
+						DevelopmentTeam = "$(COFLEET_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+					8058AE70C3D30837A5953B1B = {
+						DevelopmentTeam = "$(COFLEET_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+					BF87296568723D89002F1D9E = {
+						DevelopmentTeam = "$(COFLEET_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+					D6BC2F8AF3966189CCF9DFA4 = {
+						DevelopmentTeam = "$(COFLEET_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = A64EEBE2625A5FE18F187CB8 /* Build configuration list for PBXProject "CoFleet" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = D3129F2C704B34A038B9D55A;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				770A21820CC5A7A52DD006F8 /* XCLocalSwiftPackageReference "Packages/CoFleetKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1B377DB231FE87A9FC74F91D /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				BF87296568723D89002F1D9E /* CoFleetIOS */,
+				0C579889E1F70B2BA3C43495 /* CoFleetIOSUITests */,
+				D6BC2F8AF3966189CCF9DFA4 /* CoFleetMac */,
+				31CDD0B1D200D4128D989FEE /* CoFleetMacUITests */,
+				1C24053FCC7C7F92C5DD283A /* CoFleetWatch */,
+				6AF3AF394312CDDA0C525851 /* CoFleetWatchWidgets */,
+				8058AE70C3D30837A5953B1B /* CoFleetWidgets */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		0918D661F773DADF58F0802E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D7A493B9F795C8BDD93B3679 /* LICENSE in Resources */,
+				CCB21AB6F9DFF663F1760D97 /* PrivacyInfo.xcprivacy in Resources */,
+				F4D37B56B017AEB9F7C1AA96 /* SharedAssets.xcassets in Resources */,
+				C461A3F32BDFC55D8541C4C0 /* iOS.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2C80B194441AE3FCA807B321 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				01849EE5205FABB2E72EC816 /* PrivacyInfo.xcprivacy in Resources */,
+				CF3BD5AC3261D2ECF56F46AA /* SharedAssets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		52C9D6E46F644903D115A2FD /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100446B097ABCF4906849AFB /* PrivacyInfo.xcprivacy in Resources */,
+				99C856EB67E52D95893EEFAB /* SharedAssets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		61897015DEBEBBF7F8C391E1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6C7AD1EFBC01E6FE12B633FA /* PrivacyInfo.xcprivacy in Resources */,
+				B55E6D849039A90056A739C0 /* SharedAssets.xcassets in Resources */,
+				223FEEA596BF47FA4BDE0785 /* watchOS.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F30B7CD136971EC2794E8CAE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E022D28F252E38B3B5306661 /* LICENSE in Resources */,
+				33C0C9C8F2B108A54392FF41 /* PrivacyInfo.xcprivacy in Resources */,
+				92C7E5C576F320016DCCC4E9 /* SharedAssets.xcassets in Resources */,
+				A396AE1F62DAE65FAE92E95B /* macOS.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5EEC0EF98FEE8695ADE279D9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5C5B9C4CDB171BEDEA69B1ED /* CoFleetAppController.swift in Sources */,
+				BB4F7DDC2DCAD68155C47087 /* CoFleetAppRepository.swift in Sources */,
+				35EE6BF7852CFB010DBB1D80 /* CoFleetMacApp.swift in Sources */,
+				B4D17EDFD12B0B68642AE41A /* CoFleetSharedFiles.swift in Sources */,
+				FFA04DEAA32FFF2C187FAE3F /* CoFleetWatchRelay.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6424C2214651F5DE2B6B9CBF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5E53F2147099CC08B63A6BC9 /* CoFleetWidgets.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D5B7C0E01C28D83CDF43FBD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				90D71808744562172DF236C2 /* CoFleetAppController.swift in Sources */,
+				505E1D899FDC0BD6D4445C53 /* CoFleetAppRepository.swift in Sources */,
+				37A23A3196C305281BB6393C /* CoFleetIOSApp.swift in Sources */,
+				52BD50F5444965FD4C1A7965 /* CoFleetSharedFiles.swift in Sources */,
+				24B6A00170A6B5901A783297 /* CoFleetWatchRelay.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AC453012B9096DC550C08A91 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				403E29A1910B89B4A1638601 /* CoFleetMacUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E1D5AC6B6A1896F0EAEEB2CB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B285CE87B3D9837CA37C87C5 /* CoFleetIOSUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E7DECC4D167B5E202546D435 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AC40393963F122C481F5DF2B /* CoFleetWatchWidgets.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F33809D4D096EFFE7140BF16 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				585D4AB85110CEAAC7A534B7 /* CoFleetAppController.swift in Sources */,
+				E28ABFBE4DAFB46C0F6E517D /* CoFleetAppRepository.swift in Sources */,
+				0D8CD8D9B1F85B9A7C0E1DE6 /* CoFleetSharedFiles.swift in Sources */,
+				EA524D097C2A0E1ED38CB630 /* CoFleetWatchApp.swift in Sources */,
+				BCE219ABFFC469AAA032D535 /* CoFleetWatchRelay.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		0479805B352B1D074D45058F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BF87296568723D89002F1D9E /* CoFleetIOS */;
+			targetProxy = 9E6B2C308918A2F4D9EBAA07 /* PBXContainerItemProxy */;
+		};
+		0BB9C969FFB73043CE82AF02 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1C24053FCC7C7F92C5DD283A /* CoFleetWatch */;
+			targetProxy = 60173BB2A9437B4B4CF6ED60 /* PBXContainerItemProxy */;
+		};
+		6FD1C253040A8EDD1CE9E0DD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6AF3AF394312CDDA0C525851 /* CoFleetWatchWidgets */;
+			targetProxy = 72026AA507304067F121711A /* PBXContainerItemProxy */;
+		};
+		7CAB0E928784AB51781CA60F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8058AE70C3D30837A5953B1B /* CoFleetWidgets */;
+			targetProxy = E257847C98A0CFD3D5425542 /* PBXContainerItemProxy */;
+		};
+		AD541D3AEE636F80DF4A59D5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D6BC2F8AF3966189CCF9DFA4 /* CoFleetMac */;
+			targetProxy = 8A8FAF8D09AF7ED42EEF5304 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		16EF2EC7F386C54A72D83817 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).ios.uitests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = CoFleetIOS;
+			};
+			name = Release;
+		};
+		1DC4E7744E1BE77021E387EA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CoFleetWatch.entitlements;
+				INFOPLIST_FILE = "Config/Info/CoFleetWatch-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).ios.watchkitapp";
+				PRODUCT_MODULE_NAME = CoFleetWatch;
+				PRODUCT_NAME = "CoFleet Watch";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Debug;
+		};
+		21B8E3B049666E067095FC72 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CoFleetWatch.entitlements;
+				INFOPLIST_FILE = "Config/Info/CoFleetWatch-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).ios.watchkitapp";
+				PRODUCT_MODULE_NAME = CoFleetWatch;
+				PRODUCT_NAME = "CoFleet Watch";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Release;
+		};
+		22BCD522E4F579E0B644C0F3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).mac.uitests";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = CoFleetMac;
+			};
+			name = Debug;
+		};
+		22CE3BE2C6D6A5176E37F263 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CoFleetWidgets.entitlements;
+				INFOPLIST_FILE = "Config/Info/CoFleetWidgets-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).ios.widgets";
+				PRODUCT_MODULE_NAME = CoFleetWidgets;
+				PRODUCT_NAME = "CoFleet Widgets";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		49DA6840A8041A99F263786E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).ios.uitests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = CoFleetIOS;
+			};
+			name = Debug;
+		};
+		544B9EFC83D55F0E985B613B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		67139DCFA3C9F8DA65A5F68D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CoFleetWidgets.entitlements;
+				INFOPLIST_FILE = "Config/Info/CoFleetWidgets-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).ios.widgets";
+				PRODUCT_MODULE_NAME = CoFleetWidgets;
+				PRODUCT_NAME = "CoFleet Widgets";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		78E278C154C362555CAB56F3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CoFleetIOS.entitlements;
+				INFOPLIST_FILE = "Config/Info/CoFleetIOS-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).ios";
+				PRODUCT_MODULE_NAME = CoFleetIOS;
+				PRODUCT_NAME = CoFleet;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		843A9135C99B411EA4344A1A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		88D427768289253019179B06 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CoFleetIOS.entitlements;
+				INFOPLIST_FILE = "Config/Info/CoFleetIOS-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).ios";
+				PRODUCT_MODULE_NAME = CoFleetIOS;
+				PRODUCT_NAME = CoFleet;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		96611B7FC9D5121B5FA7B4DC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CoFleetWidgets.entitlements;
+				INFOPLIST_FILE = "Config/Info/CoFleetWatchWidgets-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks @executable_path/../../../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).ios.watchkitapp.widgets";
+				PRODUCT_MODULE_NAME = CoFleetWatchWidgets;
+				PRODUCT_NAME = "CoFleet Complications";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Debug;
+		};
+		9AEBB0D535CF00D610E4E1A9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CoFleetMac.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "Config/Info/CoFleetMac-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).mac";
+				PRODUCT_MODULE_NAME = CoFleetMac;
+				PRODUCT_NAME = CoFleet;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		ABB6590548E0AE89641DECCC /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CoFleetWidgets.entitlements;
+				INFOPLIST_FILE = "Config/Info/CoFleetWatchWidgets-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks @executable_path/../../../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).ios.watchkitapp.widgets";
+				PRODUCT_MODULE_NAME = CoFleetWatchWidgets;
+				PRODUCT_NAME = "CoFleet Complications";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Release;
+		};
+		CB6A805B6082B6EF7EE49CA4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/CoFleetMac.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "Config/Info/CoFleetMac-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).mac";
+				PRODUCT_MODULE_NAME = CoFleetMac;
+				PRODUCT_NAME = CoFleet;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		F03B4565B5D6FF099AEDC8BB /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 580A3AE52966C5B68798D119 /* Base.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(COFLEET_BUNDLE_ID_PREFIX).mac.uitests";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = CoFleetMac;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0A365E6D9223F577D2148154 /* Build configuration list for PBXNativeTarget "CoFleetIOSUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				49DA6840A8041A99F263786E /* Debug */,
+				16EF2EC7F386C54A72D83817 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		171E12D0376FC9E1008337E2 /* Build configuration list for PBXNativeTarget "CoFleetWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1DC4E7744E1BE77021E387EA /* Debug */,
+				21B8E3B049666E067095FC72 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4D535E7F64128FB7F2E175F5 /* Build configuration list for PBXNativeTarget "CoFleetIOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				78E278C154C362555CAB56F3 /* Debug */,
+				88D427768289253019179B06 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4DCBA643536A628CC15E5182 /* Build configuration list for PBXNativeTarget "CoFleetMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB6A805B6082B6EF7EE49CA4 /* Debug */,
+				9AEBB0D535CF00D610E4E1A9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4F81DB89F4C7E58A53F3F36E /* Build configuration list for PBXNativeTarget "CoFleetMacUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				22BCD522E4F579E0B644C0F3 /* Debug */,
+				F03B4565B5D6FF099AEDC8BB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		90D2D145D11166C374035578 /* Build configuration list for PBXNativeTarget "CoFleetWatchWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				96611B7FC9D5121B5FA7B4DC /* Debug */,
+				ABB6590548E0AE89641DECCC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A64EEBE2625A5FE18F187CB8 /* Build configuration list for PBXProject "CoFleet" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				843A9135C99B411EA4344A1A /* Debug */,
+				544B9EFC83D55F0E985B613B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E0DE05349FB6BFAC959FC3A6 /* Build configuration list for PBXNativeTarget "CoFleetWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				67139DCFA3C9F8DA65A5F68D /* Debug */,
+				22CE3BE2C6D6A5176E37F263 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		770A21820CC5A7A52DD006F8 /* XCLocalSwiftPackageReference "Packages/CoFleetKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/CoFleetKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0BA0197DAB8D5F6B70A3A03E /* CoFleetCodex */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetCodex;
+		};
+		116E4ACD55D63D261A6390CA /* CoFleetCodex */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetCodex;
+		};
+		11ECFB77BD09AF8BCF76DABD /* CoFleetUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetUI;
+		};
+		174916C2F5684537AA2E9087 /* CoFleetCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetCore;
+		};
+		1F14E243CB9D9E31AFEA02F6 /* CoFleetCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetCore;
+		};
+		4E181F94BA6182807B693B6B /* CoFleetUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetUI;
+		};
+		4EBE13A54C354803FECD67A9 /* CoFleetTransport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetTransport;
+		};
+		6A73316F670C547D453F71A3 /* CoFleetTransport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetTransport;
+		};
+		6E6C818F47E636D48E5E42F5 /* CoFleetUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetUI;
+		};
+		79881B255ECB2EA3C7B406F0 /* CoFleetTransport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetTransport;
+		};
+		976BDD930CEC92CE16A69329 /* CoFleetCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetCore;
+		};
+		9799B3C3DCD3BBFD4B75A81B /* CoFleetCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetCore;
+		};
+		CBCCA7480C01DBA59649BC54 /* CoFleetUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetUI;
+		};
+		D7E21FF37F209B205BFABBF5 /* CoFleetCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetCore;
+		};
+		DA7EA88448CAD4BFC8E233C8 /* CoFleetCodex */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetCodex;
+		};
+		F800DD2D8826C947E7EF5B0F /* CoFleetUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoFleetUI;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = BD396AF868823C2DA010BE1F /* Project object */;
+}

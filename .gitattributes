@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+*.png binary
+*.xcassets/**/Contents.json text eol=lf
+*.xcodeproj/** text eol=lf
+*.plist text eol=lf
+*.entitlements text eol=lf

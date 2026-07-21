@@ -1,0 +1,16 @@
+{
+  "id": "101",
+  "event": "turn.item",
+  "data": {
+    "type": "turn.item",
+    "sessionID": "thread-sample",
+    "item": {
+      "id": "message-sample",
+      "turnID": "turn-sample",
+      "kind": "assistantMessage",
+      "state": "streaming",
+      "text": "Hello from Codex.",
+      "createdAt": "2023-11-14T22:13:21Z"
+    }
+  }
+}
