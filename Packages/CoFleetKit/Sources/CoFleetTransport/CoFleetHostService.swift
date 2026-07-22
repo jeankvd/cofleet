@@ -485,6 +485,48 @@ public actor CoFleetHostService: CoFleetFleetRepository, CoFleetThreadRepository
         return manifest
     }
 
+    public func fetchPetCatalogs(hostID: CoFleetHostID) async throws -> [CoFleetPetCatalog] {
+        try await requireHost(hostID)
+        let response: PetCatalogListDTO = try await client.get("/v1/pet-catalogs")
+        return response.catalogs
+    }
+
+    public func fetchPetCatalogPage(
+        hostID: CoFleetHostID,
+        catalogID: String,
+        query: String,
+        cursor: String?
+    ) async throws -> CoFleetPetCatalogPage {
+        try await requireHost(hostID)
+        var queryItems = [URLQueryItem(name: "limit", value: "40")]
+        if !query.isEmpty { queryItems.append(URLQueryItem(name: "query", value: query)) }
+        if let cursor { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
+        let response: PetCatalogPageDTO = try await client.get(
+            "/v1/pet-catalogs/\(catalogID.pathComponent)/pets",
+            query: queryItems
+        )
+        return CoFleetPetCatalogPage(
+            catalog: response.catalog,
+            pets: response.pets,
+            nextCursor: response.nextCursor
+        )
+    }
+
+    public func installCatalogPet(
+        hostID: CoFleetHostID,
+        catalogID: String,
+        petID: String
+    ) async throws -> CoFleetPetManifest {
+        try await requireHost(hostID)
+        let response: PetEnvelopeDTO = try await client.post(
+            "/v1/pet-catalogs/\(catalogID.pathComponent)/pets/\(petID.pathComponent)/install",
+            body: InstallCatalogPetRequest()
+        )
+        let manifest = response.pet.model(hostID: hostID)
+        try CoFleetPetManifestValidator.validate(manifest)
+        return manifest
+    }
+
     public func selectPet(
         hostID: CoFleetHostID,
         projectID: String,
@@ -546,6 +588,7 @@ private struct CreateDirectoryRequest: Codable, Sendable {
 }
 
 private struct ImportPetRequest: Codable, Sendable { var sourcePath: String }
+private struct InstallCatalogPetRequest: Codable, Sendable {}
 private struct SelectPetRequest: Codable, Sendable { var petID: String }
 
 private struct RegisterProjectRequest: Codable, Sendable {
@@ -1104,6 +1147,12 @@ private struct TodoWriteDTO: Encodable, Sendable {
 
 private struct PetListDTO: Decodable, Sendable { var pets: [PetDTO] }
 private struct PetEnvelopeDTO: Decodable, Sendable { var pet: PetDTO }
+private struct PetCatalogListDTO: Decodable, Sendable { var catalogs: [CoFleetPetCatalog] }
+private struct PetCatalogPageDTO: Decodable, Sendable {
+    var catalog: CoFleetPetCatalog
+    var pets: [CoFleetPetCatalogItem]
+    var nextCursor: String?
+}
 
 private struct PetDTO: Decodable, Sendable {
     struct Manifest: Decodable, Sendable {

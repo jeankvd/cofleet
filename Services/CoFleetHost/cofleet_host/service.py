@@ -24,8 +24,10 @@ from .database import Database
 from .errors import APIError, CodexRPCError, CodexUnavailable
 from .events import EventBroker
 from .paths import canonical_directory, create_directory, list_directories
+from .pet_catalogs import PetCatalogManager
 from .pets import PetManager
 from .tailscale import verify_private_serve
+from .transcript import CodexRolloutTranscriptTail
 from .util import (
     bounded_int,
     clean_pairing_code,
@@ -119,6 +121,7 @@ class CoFleetHostService:
         private_serve_verifier=verify_private_serve,
         desktop_opener=None,
         filesystem_watcher_factory=None,
+        pet_catalog_manager=None,
     ) -> None:
         self.config = config.validate()
         self.private_serve_status = None
@@ -147,7 +150,9 @@ class CoFleetHostService:
             if hasattr(codex, "interaction_handler"):
                 codex.interaction_handler = self._on_codex_interaction
         self.desktop_opener = desktop_opener or self._open_codex_thread
+        self._transcript_tail = CodexRolloutTranscriptTail(self.config.codex_state_path)
         self.pets = PetManager(config, self.database)
+        self.pet_catalogs = pet_catalog_manager or PetCatalogManager(self.pets)
         self.host_id = self.database.host_id()
         if invalidate_pending_interactions_on_start:
             stale_interactions = self.database.invalidate_pending_interactions()
@@ -185,6 +190,8 @@ class CoFleetHostService:
         self._pairing_attempts: List[float] = []
         self._pairing_lock = threading.Lock()
         self._interaction_lock = threading.Lock()
+        self._session_resume_lock = threading.Lock()
+        self._resumed_session_generations: Dict[str, str] = {}
         self._stream_lock = threading.Lock()
         self._stream_items: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
         self._turn_started_at: Dict[Tuple[str, str], float] = {}
@@ -469,6 +476,25 @@ class CoFleetHostService:
         if len(segments) == 5 and segments[:2] == ["v1", "pets"] and segments[3] == "assets" and method == "GET":
             content_type, data = self.pets.asset(segments[2], segments[4])
             return ServiceResponse(body=data, content_type=content_type)
+        if segments == ["v1", "pet-catalogs"] and method == "GET":
+            return ServiceResponse(payload={"catalogs": self.pet_catalogs.list_catalogs()})
+        if len(segments) == 4 and segments[:2] == ["v1", "pet-catalogs"] and segments[3] == "pets" and method == "GET":
+            return ServiceResponse(payload=self.pet_catalogs.page(
+                segments[2],
+                query=query.get("query", ""),
+                cursor=query.get("cursor"),
+                limit=bounded_int(query.get("limit"), "limit", 40, 1, 60),
+            ))
+        if (
+            len(segments) == 6
+            and segments[:2] == ["v1", "pet-catalogs"]
+            and segments[3] == "pets"
+            and segments[5] == "install"
+            and method == "POST"
+        ):
+            pet = self.pet_catalogs.install(segments[2], segments[4])
+            self.events.publish("pet.imported", {"pet": pet, "catalogID": segments[2]})
+            return ServiceResponse(status=201, payload={"pet": pet})
 
         if segments == ["v1", "events"] and method == "GET":
             return self._sse_request(query, headers, None)
@@ -1134,9 +1160,16 @@ class CoFleetHostService:
         for project_id in project_ids:
             self._merge_session_catalog_thread(project_id, thread)
         turn_fingerprint = json_hash(latest)
+        turn_key = (session_id, turn_id)
+        # A filesystem wake is an invalidation signal, not evidence that every
+        # item returned by the first canonical thread/read is newly live. Codex
+        # can touch a rollout merely because Desktop opened an existing task.
+        # Baseline that first snapshot atomically and only stream item changes
+        # observed by a later read of the same turn.
+        is_initial_turn_snapshot = turn_key not in self._external_turn_fingerprints
         turn_changed = self._bounded_fingerprint_store(
             self._external_turn_fingerprints,
-            (session_id, turn_id),
+            turn_key,
             turn_fingerprint,
             512,
         )
@@ -1156,6 +1189,8 @@ class CoFleetHostService:
                     json_hash(item),
                     4_096,
                 ):
+                    continue
+                if is_initial_turn_snapshot:
                     continue
                 status = str(item.get("status", "")).lower()
                 completed = status not in ("inprogress", "in_progress", "running", "streaming")
@@ -1210,6 +1245,7 @@ class CoFleetHostService:
         if not isinstance(thread, dict) or not isinstance(thread.get("id"), str):
             raise CodexUnavailable("Codex did not return a session identifier.")
         session_id = thread["id"]
+        self._mark_session_resumed(session_id)
         self.database.put_session_settings(
             session_id,
             project_id,
@@ -1234,6 +1270,21 @@ class CoFleetHostService:
         session_id = rest[0]
         self._track_session_id(session_id)
         if len(rest) == 2 and rest[1] == "transcript" and method == "GET":
+            bounded_turns = self._transcript_tail.read_if_large(session_id)
+            if bounded_turns is not None:
+                result = self.codex.request(
+                    "thread/read", {"threadId": session_id, "includeTurns": False}
+                )
+                thread = result.get("thread", {})
+                if not isinstance(thread, dict):
+                    raise APIError(502, "invalid_codex_response", "Codex returned an invalid transcript.")
+                return ServiceResponse(
+                    payload={
+                        "session": self._normalize_session(thread),
+                        "turns": bounded_turns,
+                        "truncated": True,
+                    }
+                )
             result = self.codex.request("thread/read", {"threadId": session_id, "includeTurns": True})
             thread = result.get("thread", {})
             if not isinstance(thread, dict):
@@ -1336,6 +1387,7 @@ class CoFleetHostService:
         result = self.codex.request("thread/%s" % action, params)
         thread = result.get("thread", {})
         result_id = thread.get("id", session_id) if isinstance(thread, dict) else session_id
+        self._mark_session_resumed(result_id)
         self.database.put_session_settings(
             result_id,
             project_id,
@@ -1383,7 +1435,29 @@ class CoFleetHostService:
                 params["effort"] = effort
             if service_tier:
                 params["serviceTier"] = service_tier
-            result = self.codex.request("turn/start", params)
+            project = self.database.get_project(project_id)
+            self._ensure_session_resumed(
+                session_id,
+                project["canonicalPath"],
+                profile,
+                model,
+            )
+            try:
+                result = self.codex.request("turn/start", params)
+            except CodexRPCError as error:
+                # A process can restart between resume and turn/start. Codex can
+                # still list/read the task from disk, but the new app-server does
+                # not accept a turn until that task is resumed into its process.
+                if not self._is_missing_thread_error(error):
+                    raise
+                self._ensure_session_resumed(
+                    session_id,
+                    project["canonicalPath"],
+                    profile,
+                    model,
+                    force=True,
+                )
+                result = self.codex.request("turn/start", params)
             turn = result.get("turn")
             if not isinstance(turn, dict) or not isinstance(turn.get("id"), str):
                 raise APIError(502, "invalid_codex_response", "Codex did not return a turn identifier.")
@@ -1402,6 +1476,49 @@ class CoFleetHostService:
         except Exception:
             self.database.abandon_idempotency(scope, key)
             raise
+
+    def _mark_session_resumed(self, session_id: str) -> None:
+        generation = getattr(self.codex, "generation", None)
+        if isinstance(session_id, str) and session_id and isinstance(generation, str):
+            with self._session_resume_lock:
+                self._resumed_session_generations[session_id] = generation
+
+    def _ensure_session_resumed(
+        self,
+        session_id: str,
+        canonical_path: str,
+        profile: Mapping[str, str],
+        model: Optional[str],
+        force: bool = False,
+    ) -> None:
+        with self._session_resume_lock:
+            generation = getattr(self.codex, "generation", None)
+            if (
+                not force
+                and isinstance(generation, str)
+                and self._resumed_session_generations.get(session_id) == generation
+            ):
+                return
+            resume_params: Dict[str, Any] = {
+                "threadId": session_id,
+                "cwd": canonical_path,
+                **profile,
+                "config": {"features.default_mode_request_user_input": True},
+            }
+            if model:
+                resume_params["model"] = model
+            result = self.codex.request("thread/resume", resume_params)
+            thread = result.get("thread")
+            if not isinstance(thread, dict) or thread.get("id") != session_id:
+                raise CodexUnavailable("Codex did not resume the selected task.")
+            resumed_generation = getattr(self.codex, "generation", None)
+            if isinstance(resumed_generation, str):
+                self._resumed_session_generations[session_id] = resumed_generation
+
+    @staticmethod
+    def _is_missing_thread_error(error: CodexRPCError) -> bool:
+        message = error.message.lower()
+        return ("thread" in message and "not found" in message) or "unknown thread" in message
 
     def _turn_project_id(
         self,

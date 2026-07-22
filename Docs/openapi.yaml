@@ -244,10 +244,14 @@ paths:
         Conversation streams expose only provider-neutral turn.updated, turn.item,
         project.activityChanged, interaction.pending, interaction.resolved,
         interaction.expired, and stream.reset envelopes; raw Codex app-server
-        notifications are never exposed. On hosts running Codex Desktop, rollout
-        filesystem metadata is used only as an invalidation signal for bounded,
-        targeted canonical thread reads; rollout contents and credentials are never
-        parsed by CoFleet.
+        notifications are never exposed. Events already durable when a client
+        reconnects include `_cofleetReplay: true`, allowing completed UI to skip
+        historical partial-text animation. On hosts running Codex Desktop, rollout
+        filesystem metadata is normally used only as an invalidation signal for
+        targeted canonical thread reads. For a rollout too large for app-server's
+        unpaginated JSONL response, the transcript endpoint may parse a bounded file
+        suffix containing only user/assistant message records. Credentials,
+        reasoning contents, tool inputs, and tool outputs are never parsed.
       parameters:
         - $ref: "#/components/parameters/LastEventID"
         - name: once
@@ -592,7 +596,10 @@ paths:
         - $ref: "#/components/parameters/SessionID"
       responses:
         "200":
-          description: Canonical session and normalized turns/items from thread/read.
+          description: >-
+            Canonical session and normalized turns/items. Giant unpaginated Codex
+            tasks return only a bounded latest conversational pair and set
+            truncated to true.
           content:
             application/json:
               schema:
@@ -603,6 +610,9 @@ paths:
                   turns:
                     type: array
                     items: { $ref: "#/components/schemas/CoFleetTurn" }
+                  truncated:
+                    type: boolean
+                    default: false
   /sessions/{sessionID}/events:
     get:
       tags: [Sessions]
@@ -938,6 +948,54 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DiscoveredPetListEnvelope" }
+  /pet-catalogs:
+    get:
+      tags: [Pets]
+      operationId: listPetCatalogs
+      responses:
+        "200":
+          description: Allowlisted community repositories exposed as separate catalogs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [catalogs]
+                properties:
+                  catalogs:
+                    type: array
+                    items: { $ref: "#/components/schemas/CoFleetPetCatalog" }
+  /pet-catalogs/{catalogID}/pets:
+    get:
+      tags: [Pets]
+      operationId: listPetCatalogPets
+      parameters:
+        - $ref: "#/components/parameters/CatalogID"
+        - { name: query, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 60, default: 40 } }
+      responses:
+        "200":
+          description: One bounded page from exactly one community catalog.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetCatalogPageEnvelope" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+  /pet-catalogs/{catalogID}/pets/{catalogPetID}/install:
+    post:
+      tags: [Pets]
+      operationId: installCatalogPet
+      parameters:
+        - $ref: "#/components/parameters/CatalogID"
+        - $ref: "#/components/parameters/CatalogPetID"
+      responses:
+        "201":
+          description: The allowlisted package was downloaded, validated, deduplicated, and imported.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetEnvelope" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "502": { $ref: "#/components/responses/BadGateway" }
   /pets/{petID}/assets/{assetName}:
     get:
       tags: [Pets]
@@ -970,6 +1028,8 @@ components:
     NoteID: { name: noteID, in: path, required: true, schema: { type: string } }
     TodoID: { name: todoID, in: path, required: true, schema: { type: string } }
     PetID: { name: petID, in: path, required: true, schema: { type: string } }
+    CatalogID: { name: catalogID, in: path, required: true, schema: { type: string } }
+    CatalogPetID: { name: catalogPetID, in: path, required: true, schema: { type: string } }
     Cursor: { name: cursor, in: query, schema: { type: string } }
     Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
     LastEventID: { name: Last-Event-ID, in: header, schema: { type: integer, minimum: 0 } }
@@ -1005,6 +1065,9 @@ components:
       content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
     CodexUnavailable:
       description: Codex is absent, restarting, or timed out.
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    BadGateway:
+      description: An allowlisted community catalog or asset host is temporarily unavailable.
       content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   schemas:
     ErrorResponse:
@@ -1169,6 +1232,38 @@ components:
         description: { type: string }
         spriteVersionNumber: { type: integer, enum: [1, 2] }
         digest: { type: string, pattern: "^[0-9a-f]{64}$" }
+    PetCatalogPageEnvelope:
+      type: object
+      required: [catalog, pets]
+      properties:
+        catalog: { $ref: "#/components/schemas/CoFleetPetCatalog" }
+        pets:
+          type: array
+          items: { $ref: "#/components/schemas/CoFleetPetCatalogItem" }
+        nextCursor: { type: [string, "null"] }
+    CoFleetPetCatalog:
+      type: object
+      required: [id, displayName, description, repositoryURL, licenseSummary]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        description: { type: string }
+        repositoryURL: { type: string, format: uri }
+        licenseSummary: { type: string }
+        itemCount: { type: integer, minimum: 0 }
+    CoFleetPetCatalogItem:
+      type: object
+      required: [catalogID, id, displayName, description, author, license, spriteVersionNumber, previewURL, previewKind]
+      properties:
+        catalogID: { type: string }
+        id: { type: string }
+        displayName: { type: string }
+        description: { type: string }
+        author: { type: string }
+        license: { type: string }
+        spriteVersionNumber: { type: integer, enum: [1, 2] }
+        previewURL: { type: string, format: uri }
+        previewKind: { type: string, enum: [animation, atlas] }
     CoFleetHostInfo:
       type: object
       required: [id, displayName, platform, homePath, serviceVersion, codexAvailable, transport, publicExposureAllowed, capabilities]

@@ -228,6 +228,10 @@ def handler_for(service: CoFleetHostService) -> Type[BaseHTTPRequestHandler]:
                 self.end_headers()
                 cursor = request.after_id
                 last_sent_cursor = request.after_id
+                # Everything already durable when this connection opens is replay,
+                # even if it takes multiple bounded pages to drain. Apple clients
+                # use this marker to avoid animating old partial text as a live turn.
+                replay_through = service.events.latest_id()
                 sent_reset = False
                 last_heartbeat = time.monotonic()
                 while True:
@@ -246,7 +250,10 @@ def handler_for(service: CoFleetHostService) -> Type[BaseHTTPRequestHandler]:
                         cursor = max(cursor, int(event["id"]))
                         if not service.event_matches_session(event, request.session_id):
                             continue
-                        self._write_sse(event["id"], event["type"], event["data"])
+                        data = dict(event["data"])
+                        if int(event["id"]) <= replay_through:
+                            data["_cofleetReplay"] = True
+                        self._write_sse(event["id"], event["type"], data)
                         last_sent_cursor = int(event["id"])
                     if cursor > last_sent_cursor:
                         # A session stream may scan host events belonging to a

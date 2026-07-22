@@ -156,15 +156,18 @@ public struct CoFleetSequencedHostEvent: Hashable, Sendable {
     public var id: String?
     public var event: CoFleetHostEvent
     public var retryMilliseconds: Int?
+    public var isReplay: Bool
 
     public init(
         id: String? = nil,
         event: CoFleetHostEvent,
-        retryMilliseconds: Int? = nil
+        retryMilliseconds: Int? = nil,
+        isReplay: Bool = false
     ) {
         self.id = id
         self.event = event
         self.retryMilliseconds = retryMilliseconds
+        self.isReplay = isReplay
     }
 }
 

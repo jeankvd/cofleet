@@ -212,6 +212,86 @@ public struct CoFleetDiscoveredPet: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+public struct CoFleetPetCatalog: Codable, Identifiable, Hashable, Sendable {
+    public var id: String
+    public var displayName: String
+    public var description: String
+    public var repositoryURL: String
+    public var licenseSummary: String
+    public var itemCount: Int?
+
+    public init(
+        id: String,
+        displayName: String,
+        description: String,
+        repositoryURL: String,
+        licenseSummary: String,
+        itemCount: Int? = nil
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.description = description
+        self.repositoryURL = repositoryURL
+        self.licenseSummary = licenseSummary
+        self.itemCount = itemCount
+    }
+}
+
+public enum CoFleetPetCatalogPreviewKind: String, Codable, Hashable, Sendable {
+    case animation
+    case atlas
+}
+
+public struct CoFleetPetCatalogItem: Codable, Identifiable, Hashable, Sendable {
+    public var catalogID: String
+    public var id: String
+    public var displayName: String
+    public var description: String
+    public var author: String
+    public var license: String
+    public var spriteVersionNumber: Int
+    public var previewURL: String
+    public var previewKind: CoFleetPetCatalogPreviewKind
+
+    public init(
+        catalogID: String,
+        id: String,
+        displayName: String,
+        description: String,
+        author: String,
+        license: String,
+        spriteVersionNumber: Int,
+        previewURL: String,
+        previewKind: CoFleetPetCatalogPreviewKind
+    ) {
+        self.catalogID = catalogID
+        self.id = id
+        self.displayName = displayName
+        self.description = description
+        self.author = author
+        self.license = license
+        self.spriteVersionNumber = spriteVersionNumber
+        self.previewURL = previewURL
+        self.previewKind = previewKind
+    }
+}
+
+public struct CoFleetPetCatalogPage: Codable, Hashable, Sendable {
+    public var catalog: CoFleetPetCatalog
+    public var pets: [CoFleetPetCatalogItem]
+    public var nextCursor: String?
+
+    public init(
+        catalog: CoFleetPetCatalog,
+        pets: [CoFleetPetCatalogItem],
+        nextCursor: String? = nil
+    ) {
+        self.catalog = catalog
+        self.pets = pets
+        self.nextCursor = nextCursor
+    }
+}
+
 /// Durable handoff between a CoFleet project and the Codex task that is hatching
 /// its next pet. CoFleet records the host catalog before starting the task, then
 /// imports only packages that appear after the hatch begins.

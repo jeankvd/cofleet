@@ -962,7 +962,9 @@ private struct CoFleetAgentBayAvatar: View {
                 name: name,
                 manifest: manifest,
                 asset: asset,
-                action: action,
+                // Action state is already represented beside the avatar. Keep
+                // the portrait on the complete idle loop, as Manada does.
+                action: .idle,
                 size: size * 0.92
             )
             .shadow(color: CoFleetTheme.cyan.opacity(0.45), radius: 7, y: 3)

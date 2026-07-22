@@ -428,6 +428,36 @@ public actor CoFleetAppRepository: CoFleetFleetRepository, CoFleetThreadReposito
         try await service(for: hostID).importPet(hostID: hostID, sourcePath: sourcePath)
     }
 
+    public func fetchPetCatalogs(hostID: CoFleetHostID) async throws -> [CoFleetPetCatalog] {
+        try await service(for: hostID).fetchPetCatalogs(hostID: hostID)
+    }
+
+    public func fetchPetCatalogPage(
+        hostID: CoFleetHostID,
+        catalogID: String,
+        query: String,
+        cursor: String?
+    ) async throws -> CoFleetPetCatalogPage {
+        try await service(for: hostID).fetchPetCatalogPage(
+            hostID: hostID,
+            catalogID: catalogID,
+            query: query,
+            cursor: cursor
+        )
+    }
+
+    public func installCatalogPet(
+        hostID: CoFleetHostID,
+        catalogID: String,
+        petID: String
+    ) async throws -> CoFleetPetManifest {
+        try await service(for: hostID).installCatalogPet(
+            hostID: hostID,
+            catalogID: catalogID,
+            petID: petID
+        )
+    }
+
     public func selectPet(
         hostID: CoFleetHostID,
         projectID: String,

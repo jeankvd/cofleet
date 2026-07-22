@@ -10,7 +10,7 @@ final class HostActivityTests: XCTestCase {
         let raw = CoFleetSSEEvent(
             id: "42",
             name: "project.activityChanged",
-            data: #"{"type":"project.activityChanged","hostID":"host-sample","projectID":"project-one","sessionID":"session-one","turnID":"turn-one","state":"working","itemKind":"reasoning","observedAt":"2026-07-21T17:00:00Z","source":"codexDesktop"}"#,
+            data: #"{"type":"project.activityChanged","hostID":"host-sample","projectID":"project-one","sessionID":"session-one","turnID":"turn-one","state":"working","itemKind":"reasoning","observedAt":"2026-07-21T17:00:00Z","source":"codexDesktop","_cofleetReplay":true}"#,
             retryMilliseconds: 1_200
         )
 
@@ -18,6 +18,7 @@ final class HostActivityTests: XCTestCase {
 
         XCTAssertEqual(decoded.id, "42")
         XCTAssertEqual(decoded.retryMilliseconds, 1_200)
+        XCTAssertTrue(decoded.isReplay)
         guard case let .activityChanged(update) = decoded.event else {
             return XCTFail("Expected project activity")
         }

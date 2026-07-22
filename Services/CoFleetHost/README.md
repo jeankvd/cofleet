@@ -6,6 +6,11 @@ turns, transcripts, and approvals. The service owns host pairing, project
 registration, notes, todos, imported pet packages, durable event replay, and
 idempotency records in SQLite.
 
+Codex app-server's transcript read is intentionally the normal source of truth.
+For a rollout too large to fit its unpaginated JSONL response, the host reads a
+bounded local suffix and returns only the latest user/assistant pair. It never
+extracts credentials, reasoning contents, tool inputs, or tool outputs.
+
 The macOS and iOS CoFleet applications do not bundle or automatically install
 this service. They are clients of a separately running `cofleet-host` instance.
 

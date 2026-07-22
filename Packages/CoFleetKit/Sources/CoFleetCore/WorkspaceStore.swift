@@ -8,6 +8,10 @@ public final class WorkspaceStore {
     public private(set) var todos: [CoFleetTodoItem] = []
     public private(set) var pets: [CoFleetPetManifest] = []
     public private(set) var discoveredPets: [CoFleetDiscoveredPet] = []
+    public private(set) var petCatalogs: [CoFleetPetCatalog] = []
+    public private(set) var catalogPetsByCatalogID: [String: [CoFleetPetCatalogItem]] = [:]
+    public private(set) var catalogNextCursorByCatalogID: [String: String] = [:]
+    public private(set) var loadingPetCatalogIDs: Set<String> = []
     public private(set) var selectedPetID: String?
     public private(set) var selectedPetAsset: CoFleetPetAsset?
     public private(set) var battlePetManifestsByProjectID: [String: CoFleetPetManifest] = [:]
@@ -75,6 +79,10 @@ public final class WorkspaceStore {
         pets = []
         selectedPetAsset = nil
         discoveredPets = []
+        petCatalogs = []
+        catalogPetsByCatalogID = [:]
+        catalogNextCursorByCatalogID = [:]
+        loadingPetCatalogIDs = []
         todoDraft = ""
 
         let draftKey = CoFleetNoteDraftKey(
@@ -229,6 +237,68 @@ public final class WorkspaceStore {
     public func discoverPets() async throws {
         guard let hostID else { return }
         discoveredPets = try await repository.discoverPets(hostID: hostID)
+    }
+
+    public func refreshPetCatalogs() async throws {
+        guard isHostOnline else {
+            throw CoFleetClientError.unavailable("Community catalogs require an online host.")
+        }
+        guard let hostID else { return }
+        petCatalogs = try await repository.fetchPetCatalogs(hostID: hostID)
+    }
+
+    public func loadPetCatalog(
+        id catalogID: String,
+        query: String = "",
+        reset: Bool = true
+    ) async throws {
+        guard isHostOnline else {
+            throw CoFleetClientError.unavailable("Community catalogs require an online host.")
+        }
+        guard let hostID, !loadingPetCatalogIDs.contains(catalogID) else { return }
+        loadingPetCatalogIDs.insert(catalogID)
+        defer { loadingPetCatalogIDs.remove(catalogID) }
+        let cursor = reset ? nil : catalogNextCursorByCatalogID[catalogID]
+        if !reset, cursor == nil { return }
+        let page = try await repository.fetchPetCatalogPage(
+            hostID: hostID,
+            catalogID: catalogID,
+            query: query,
+            cursor: cursor
+        )
+        if let index = petCatalogs.firstIndex(where: { $0.id == page.catalog.id }) {
+            petCatalogs[index] = page.catalog
+        }
+        if reset {
+            catalogPetsByCatalogID[catalogID] = page.pets
+        } else {
+            var existing = catalogPetsByCatalogID[catalogID, default: []]
+            let existingIDs = Set(existing.map(\.id))
+            existing.append(contentsOf: page.pets.filter { !existingIDs.contains($0.id) })
+            catalogPetsByCatalogID[catalogID] = existing
+        }
+        catalogNextCursorByCatalogID[catalogID] = page.nextCursor
+    }
+
+    @discardableResult
+    public func installCatalogPet(catalogID: String, petID: String) async throws -> CoFleetPetManifest? {
+        guard isHostOnline else {
+            throw CoFleetClientError.unavailable("Community pets require an online host.")
+        }
+        guard let hostID else { return nil }
+        let imported = try await repository.installCatalogPet(
+            hostID: hostID,
+            catalogID: catalogID,
+            petID: petID
+        )
+        if let index = pets.firstIndex(where: { $0.id == imported.id }) {
+            pets[index] = imported
+        } else {
+            pets.append(imported)
+            pets.sort { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+        }
+        petCatalogByHostID[hostID] = pets
+        return imported
     }
 
     @discardableResult

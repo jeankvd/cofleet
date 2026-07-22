@@ -8,6 +8,10 @@ import ImageIO
 #endif
 
 enum CoFleetPetFramePolicy {
+    /// Matches the 150 ms delay encoded by the Codex pet preview GIFs that
+    /// Manada uses for its project avatars.
+    nonisolated static let previewFrameDuration: TimeInterval = 0.15
+
     struct Sequence: Equatable, Sendable {
         let row: Int
         let columns: [Int]
@@ -120,7 +124,7 @@ public struct CoFleetPetSpriteView: View {
                let identity = atlasIdentity,
                let loadedAtlas,
                loadedAtlas.identity == identity {
-                TimelineView(.animation(minimumInterval: 0.12, paused: reduceMotion)) { context in
+                TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: reduceMotion)) { context in
                     let sequence = loadedAtlas.sequence(for: animationRow)
                     atlasFrame(
                         loadedAtlas.image,
@@ -278,7 +282,11 @@ private struct CoFleetLoadedPetAtlas: @unchecked Sendable {
         let columns = sequence.columns
         guard !columns.isEmpty else { return 0 }
         if paused { return columns[0] }
-        let index = Int(date.timeIntervalSinceReferenceDate / 0.12) % columns.count
+        // Codex PokéPets previews use 150 ms frames. Keeping that cadence makes
+        // the atlas loop match Manada's preview.gif instead of looking like a
+        // tiny, over-fast bob.
+        let index = Int(date.timeIntervalSinceReferenceDate / CoFleetPetFramePolicy.previewFrameDuration)
+            % columns.count
         return columns[index]
     }
 }

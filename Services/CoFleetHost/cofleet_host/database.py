@@ -941,6 +941,13 @@ class Database:
             )
         return events, reset_required
 
+    def latest_event_id(self) -> int:
+        with self._lock:
+            value = self._connection.execute(
+                "SELECT COALESCE(MAX(id), 0) AS id FROM event_log"
+            ).fetchone()["id"]
+        return int(value)
+
     # Idempotency --------------------------------------------------------------
 
     def claim_idempotency(

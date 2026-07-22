@@ -28,6 +28,7 @@ public final class TurnStore {
     @ObservationIgnored private var isRestoringComposer = false
     @ObservationIgnored private var itemRevision: UInt64 = 0
     @ObservationIgnored private var interactionRevision: UInt64 = 0
+    @ObservationIgnored private var eventStreamErrorMessage: String?
     public private(set) var lastProcessedEventID: String?
 
     public init(repository: any CoFleetTurnRepository) {
@@ -55,6 +56,7 @@ public final class TurnStore {
         activeTurn = nil
         restoreComposer(for: route)
         lastProcessedEventID = nil
+        eventStreamErrorMessage = nil
         isLoading = true
 
         let repository = repository
@@ -112,6 +114,7 @@ public final class TurnStore {
         activeTurn = nil
         clearVisibleComposer()
         lastProcessedEventID = nil
+        eventStreamErrorMessage = nil
         isLoading = false
         errorMessage = nil
     }
@@ -245,6 +248,11 @@ public final class TurnStore {
                         sessionID: sessionID,
                         afterEventID: afterEventID
                     )
+                    if let eventStreamErrorMessage = self?.eventStreamErrorMessage,
+                       self?.errorMessage == eventStreamErrorMessage {
+                        self?.errorMessage = nil
+                    }
+                    self?.eventStreamErrorMessage = nil
                     for try await sequenced in stream {
                         guard !Task.isCancelled, self?.openGeneration == generation else { return }
                         self?.consume(sequenced)
@@ -253,8 +261,11 @@ public final class TurnStore {
                 } catch is CancellationError {
                     return
                 } catch {
-                    if self?.openGeneration == generation {
-                        self?.errorMessage = error.localizedDescription
+                    if self?.openGeneration == generation,
+                       !Self.isExpectedEventStreamDisconnect(error) {
+                        let message = error.localizedDescription
+                        self?.eventStreamErrorMessage = message
+                        self?.errorMessage = message
                     }
                 }
                 let jitter = Double.random(in: 0.8...1.2)
@@ -444,6 +455,19 @@ public final class TurnStore {
         } catch {
             return .failure(error.localizedDescription)
         }
+    }
+
+    /// A long-lived SSE request can end at an HTTP or transport timeout even
+    /// when no chat operation failed. The reconnect loop owns these expected
+    /// disconnects; surfacing them in the composer makes an untouched task look
+    /// broken before the user has sent anything.
+    nonisolated private static func isExpectedEventStreamDisconnect(_ error: Error) -> Bool {
+        let message = error.localizedDescription.lowercased()
+        return message.contains("request timed out")
+            || message.contains("timed out")
+            || message.contains("timeout")
+            || message.contains("network connection was lost")
+            || message.contains("connection reset")
     }
 }
 

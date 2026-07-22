@@ -183,12 +183,27 @@ class PetManager:
             raise APIError(422, "invalid_pet_path", "Pet paths must be absolute.")
         manifest_path = candidate / "pet.json" if candidate.is_dir() else candidate
         manifest_bytes = _read_regular(manifest_path, MANIFEST_LIMIT)
+        manifest = self._decode_manifest(manifest_bytes)
+        sprite_path_value = manifest.get("spritesheetPath", manifest.get("spriteSheetPath"))
+        relative = self._safe_sprite_path(sprite_path_value)
+        source_root = manifest_path.parent.resolve(strict=True)
+        sprite_path = source_root.joinpath(*relative.parts)
         try:
-            manifest = json.loads(manifest_bytes.decode("utf-8"))
-        except (UnicodeError, json.JSONDecodeError):
-            raise APIError(422, "invalid_pet_manifest", "pet.json must contain valid UTF-8 JSON.")
-        if not isinstance(manifest, dict):
-            raise APIError(422, "invalid_pet_manifest", "pet.json must contain a JSON object.")
+            resolved_sprite = sprite_path.resolve(strict=True)
+            common = os.path.commonpath((str(source_root), str(resolved_sprite)))
+        except (ValueError, OSError, RuntimeError):
+            raise APIError(422, "unsafe_pet_package", "The spritesheet path cannot be resolved safely.")
+        if common != str(source_root) or sprite_path.is_symlink():
+            raise APIError(422, "unsafe_pet_package", "The spritesheet cannot escape through a symlink.")
+        asset = _read_regular(resolved_sprite, self.config.pet_asset_limit)
+        return self.validate_payload(manifest_bytes, asset)
+
+    def validate_payload(self, manifest_bytes: bytes, asset: bytes) -> Tuple[Dict[str, Any], bytes, str]:
+        if not manifest_bytes or len(manifest_bytes) > MANIFEST_LIMIT:
+            raise APIError(422, "pet_asset_size", "pet.json has an invalid size.")
+        if not asset or len(asset) > self.config.pet_asset_limit:
+            raise APIError(422, "pet_asset_size", "The pet spritesheet has an invalid size.")
+        manifest = self._decode_manifest(manifest_bytes)
         display_name = manifest.get("displayName")
         if not isinstance(display_name, str) or not display_name.strip() or len(display_name) > 80:
             raise APIError(422, "invalid_pet_manifest", "displayName must contain 1 to 80 characters.")
@@ -200,27 +215,10 @@ class PetManager:
         sprite_version = manifest.get("spriteVersionNumber", 1)
         if type(sprite_version) is not int or sprite_version not in EXPECTED_DIMENSIONS:
             raise APIError(422, "unsupported_pet_version", "Only Codex pet versions 1 and 2 are supported.")
-        sprite_path_value = manifest.get("spritesheetPath", manifest.get("spriteSheetPath"))
-        if not isinstance(sprite_path_value, str) or not sprite_path_value:
-            raise APIError(422, "invalid_pet_manifest", "spritesheetPath is required.")
-        if CONTROL_CHARACTERS.search(sprite_path_value) or len(sprite_path_value) > 512:
-            raise APIError(422, "invalid_pet_manifest", "spritesheetPath is invalid.")
-        relative = pathlib.PurePosixPath(sprite_path_value.replace("\\", "/"))
-        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
-            raise APIError(422, "unsafe_pet_package", "The spritesheet path must stay inside the package.")
-        source_root = manifest_path.parent.resolve(strict=True)
-        sprite_path = source_root.joinpath(*relative.parts)
-        try:
-            resolved_sprite = sprite_path.resolve(strict=True)
-            common = os.path.commonpath((str(source_root), str(resolved_sprite)))
-        except (ValueError, OSError, RuntimeError):
-            raise APIError(422, "unsafe_pet_package", "The spritesheet path cannot be resolved safely.")
-        if common != str(source_root) or sprite_path.is_symlink():
-            raise APIError(422, "unsafe_pet_package", "The spritesheet cannot escape through a symlink.")
-        extension = resolved_sprite.suffix.lower()
+        relative = self._safe_sprite_path(manifest.get("spritesheetPath", manifest.get("spriteSheetPath")))
+        extension = relative.suffix.lower()
         if extension not in ALLOWED_SPRITE_EXTENSIONS:
             raise APIError(422, "invalid_pet_image", "Spritesheets must be PNG or WebP.")
-        asset = _read_regular(resolved_sprite, self.config.pet_asset_limit)
         size = _png_size(asset) if extension == ".png" else _webp_size(asset)
         if size != EXPECTED_DIMENSIONS[sprite_version]:
             raise APIError(
@@ -247,8 +245,42 @@ class PetManager:
         digest = hashlib.sha256(canonical_json(normalized).encode("utf-8") + asset).hexdigest()
         return normalized, asset, digest
 
+    @staticmethod
+    def _decode_manifest(manifest_bytes: bytes) -> Dict[str, Any]:
+        try:
+            manifest = json.loads(manifest_bytes.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError):
+            raise APIError(422, "invalid_pet_manifest", "pet.json must contain valid UTF-8 JSON.")
+        if not isinstance(manifest, dict):
+            raise APIError(422, "invalid_pet_manifest", "pet.json must contain a JSON object.")
+        return manifest
+
+    @staticmethod
+    def _safe_sprite_path(sprite_path_value: Any) -> pathlib.PurePosixPath:
+        if not isinstance(sprite_path_value, str) or not sprite_path_value:
+            raise APIError(422, "invalid_pet_manifest", "spritesheetPath is required.")
+        if CONTROL_CHARACTERS.search(sprite_path_value) or len(sprite_path_value) > 512:
+            raise APIError(422, "invalid_pet_manifest", "spritesheetPath is invalid.")
+        relative = pathlib.PurePosixPath(sprite_path_value.replace("\\", "/"))
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+            raise APIError(422, "unsafe_pet_package", "The spritesheet path must stay inside the package.")
+        return relative
+
     def import_package(self, raw_path: str) -> Dict[str, Any]:
         normalized, asset, digest = self.validate(raw_path)
+        return self._store(normalized, asset, digest, str(pathlib.Path(raw_path).expanduser()))
+
+    def import_payload(self, manifest_bytes: bytes, asset: bytes, source_url: str) -> Dict[str, Any]:
+        normalized, validated_asset, digest = self.validate_payload(manifest_bytes, asset)
+        return self._store(normalized, validated_asset, digest, source_url)
+
+    def _store(
+        self,
+        normalized: Dict[str, Any],
+        asset: bytes,
+        digest: str,
+        source_path: str,
+    ) -> Dict[str, Any]:
         existing = [pet for pet in self.database.list_pets() if pet["digest"] == digest]
         if existing:
             return existing[0]
@@ -262,7 +294,7 @@ class PetManager:
             0o600,
         )
         return self.database.add_pet(
-            source_path=str(pathlib.Path(raw_path).expanduser()),
+            source_path=source_path,
             storage_path=str(destination),
             display_name=normalized["displayName"],
             description=normalized["description"],

@@ -59,6 +59,41 @@ final class UIParityPolicyTests: XCTestCase {
         )
     }
 
+    func testProgressCombinesCodexAndActivityIntoOneBadge() {
+        XCTAssertEqual(
+            CoFleetProgressProviderBadgePolicy.activityLabel(
+                activity: .idle,
+                projectState: .idle,
+                reachability: .online
+            ),
+            "Idle"
+        )
+        XCTAssertEqual(
+            CoFleetProgressProviderBadgePolicy.activityLabel(
+                activity: .thinking,
+                projectState: .working,
+                reachability: .online
+            ),
+            "Thinking"
+        )
+        XCTAssertEqual(
+            CoFleetProgressProviderBadgePolicy.activityLabel(
+                activity: .replied,
+                projectState: .replied,
+                reachability: .online
+            ),
+            "Replied"
+        )
+        XCTAssertEqual(
+            CoFleetProgressProviderBadgePolicy.activityLabel(
+                activity: .thinking,
+                projectState: .working,
+                reachability: .offline
+            ),
+            "Offline"
+        )
+    }
+
     func testActiveProgressPaneFitsOneFreshMessageCardWithoutTakingTheWholeScreen() {
         XCTAssertEqual(CoFleetActiveLayoutPolicy.progressHeight(availableHeight: 500), 340)
         XCTAssertEqual(CoFleetActiveLayoutPolicy.progressHeight(availableHeight: 800), 416)

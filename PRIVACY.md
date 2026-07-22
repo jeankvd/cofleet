@@ -17,6 +17,12 @@ Codex remains authoritative for account state, tasks, turns, transcripts, and
 approvals. A project host is authoritative for CoFleet notes, todos, project
 registrations, pet imports, and synchronization metadata.
 
+CoFleet normally obtains transcripts through Codex app-server. Because that
+API does not paginate task turns, a project host may read a bounded suffix of a
+very large local Codex rollout to recover only the latest user and assistant
+messages. This fallback does not inspect credentials, reasoning contents, tool
+inputs, or tool outputs.
+
 ## Where data lives
 
 - Host-owned data is stored in the host's local SQLite database.

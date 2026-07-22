@@ -20,6 +20,9 @@ class EventBroker:
     def replay(self, after_id: int, limit: int = 200) -> Tuple[List[Dict[str, Any]], bool]:
         return self.database.events_after(after_id, limit)
 
+    def latest_id(self) -> int:
+        return self.database.latest_event_id()
+
     def wait(self, timeout: float) -> None:
         with self._condition:
             self._condition.wait(timeout)

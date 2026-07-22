@@ -194,8 +194,9 @@ class ExternalActivityTests(unittest.TestCase):
         self.assertEqual(catalog[-1]["data"]["currentSessionID"], THREAD_ID)
         turn = [event for event in events if event["type"] == "turn.updated"][-1]
         self.assertEqual(turn["data"]["projectID"], project["id"])
-        item = [event for event in events if event["type"] == "turn.item"][-1]
-        self.assertEqual(item["data"]["projectID"], project["id"])
+        # Opening an existing Desktop task baselines its canonical snapshot.
+        # Historical items must not replay one by one through Progress.
+        self.assertFalse(any(event["type"] == "turn.item" for event in events))
         activity = [event for event in events if event["type"] == "project.activityChanged"]
         self.assertEqual(activity[-1]["data"]["state"], "working")
         self.assertEqual(activity[-1]["data"]["source"], "codexDesktop")
@@ -210,6 +211,22 @@ class ExternalActivityTests(unittest.TestCase):
         items = [event for event in events if event["type"] == "turn.item"]
         self.assertEqual(items[-1]["data"]["item"]["text"], "Finished")
         self.assertNotIn("thread/list", [method for method, _ in fixture.codex.requests])
+
+    def test_completed_desktop_snapshot_is_atomic_on_first_observation(self):
+        fixture = self.fixture()
+        project = fixture.project()
+        fixture.codex.responses["thread/read"] = {
+            "thread": self.thread(project, status="completed", text="Already finished"),
+        }
+
+        self.assertTrue(fixture.service._reconcile_external_session(THREAD_ID))
+
+        events = fixture.service.events.replay(0)[0]
+        self.assertTrue(any(event["type"] == "session.catalogUpdated" for event in events))
+        self.assertFalse(any(event["type"] == "turn.item" for event in events))
+        activity = [event for event in events if event["type"] == "project.activityChanged"]
+        self.assertEqual(activity[-1]["data"]["state"], "idle")
+        self.assertEqual(activity[-1]["data"]["source"], "codexDesktop")
 
     def test_stale_interrupted_snapshot_stays_working_until_completed_advances(self):
         fixture = self.fixture()
@@ -251,8 +268,7 @@ class ExternalActivityTests(unittest.TestCase):
         activity = [event for event in events if event["type"] == "project.activityChanged"]
         self.assertEqual(activity[-1]["data"]["state"], "idle")
         self.assertTrue(any(event["type"] == "session.catalogUpdated" for event in events))
-        items = [event for event in events if event["type"] == "turn.item"]
-        self.assertEqual(items[-1]["data"]["item"]["text"], "Actual reply")
+        self.assertFalse(any(event["type"] == "turn.item" for event in events))
 
     def test_unregistered_unknown_task_never_crosses_host_event_stream(self):
         fixture = self.fixture()

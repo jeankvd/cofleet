@@ -50,6 +50,44 @@ enum CoFleetProgressTodoProjection {
     }
 }
 
+enum CoFleetProgressProviderBadgePolicy {
+    static func activityLabel(
+        activity: CoFleetProjectActivity?,
+        projectState: CoFleetProjectState,
+        reachability: CoFleetReachability
+    ) -> String {
+        switch reachability {
+        case .offline, .degraded:
+            return "Offline"
+        case .unknown:
+            return "Checking"
+        case .online:
+            break
+        }
+
+        if let activity {
+            switch activity {
+            case .idle: return "Idle"
+            case .thinking: return "Thinking"
+            case .reasoning: return "Reasoning"
+            case .runningCommand: return "Command"
+            case .approval: return "Approval"
+            case .question: return "Question"
+            case .replied: return "Replied"
+            }
+        }
+
+        switch projectState {
+        case .idle: return "Idle"
+        case .working: return "Working"
+        case .waitingForApproval: return "Approval"
+        case .waitingForAnswer: return "Question"
+        case .replied: return "Replied"
+        case .unavailable: return "Offline"
+        }
+    }
+}
+
 public struct CoFleetProgressView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable private var fleetStore: FleetStore
@@ -831,30 +869,6 @@ public struct CoFleetProjectCard: View {
             VStack(alignment: .leading, spacing: 11) {
                 projectHeader
 
-                if let activityLabel {
-                    HStack(spacing: 8) {
-                        Image(systemName: progressState.needsAttention ? "exclamationmark.triangle.fill" : "waveform.path")
-                            .foregroundStyle(progressColor)
-                        Text(activityLabel)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                        if progressState == .working {
-                            Spacer(minLength: 4)
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(progressColor)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(progressColor.opacity(0.11), in: RoundedRectangle(cornerRadius: 9))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 9)
-                            .stroke(progressColor.opacity(0.2))
-                    }
-                    .allowsHitTesting(false)
-                }
-
                 conversationPreview
                     .allowsHitTesting(false)
 
@@ -1024,44 +1038,39 @@ public struct CoFleetProjectCard: View {
                         .foregroundStyle(accent.opacity(0.9))
                         .lineLimit(1)
                         .minimumScaleFactor(0.55)
-                    Text(progressState.label)
-                        .font(.system(size: metrics.isCompact ? 10.5 : 13.5, weight: .bold))
-                        .foregroundStyle(progressColor)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.55)
-                        .padding(.horizontal, metrics.isCompact ? 6 : 10.5)
-                        .padding(.vertical, metrics.isCompact ? 3 : 4.5)
-                        .background(progressColor.opacity(0.14), in: Capsule())
+                        .layoutPriority(1)
+                    sessionHistoryButton(compact: metrics.isCompact)
                 }
 
-                HStack(spacing: metrics.isCompact ? 3 : 5) {
-                    codexPill(compact: metrics.isCompact)
-                    Button(action: onShowSessions) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: metrics.isCompact ? 12 : 16, weight: .bold))
-                            if sessionCount > 0 {
-                                Text("\(sessionCount)")
-                                    .font(.system(size: metrics.isCompact ? 12 : 16, weight: .bold, design: .rounded))
-                                    .monospacedDigit()
-                            }
-                        }
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, metrics.isCompact ? 7 : 12)
-                        .padding(.vertical, metrics.isCompact ? 4 : 6)
-                        .background(Color.white.opacity(0.07), in: Capsule())
-                        .overlay { Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1) }
-                    }
-                    .buttonStyle(.plain)
-                    .fixedSize()
-                    .cofleetCardSelectionExclusion(in: selectionCoordinateSpace)
-                    .help("Browse and switch sessions")
-                    .accessibilityLabel("Session history for \(project.displayName)")
-                    .accessibilityValue("\(sessionCount) session\(sessionCount == 1 ? "" : "s")")
-                }
+                codexPill(compact: metrics.isCompact)
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func sessionHistoryButton(compact: Bool) -> some View {
+        Button(action: onShowSessions) {
+            HStack(spacing: 4) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: compact ? 12 : 16, weight: .bold))
+                if sessionCount > 0 {
+                    Text("\(sessionCount)")
+                        .font(.system(size: compact ? 12 : 16, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                }
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, compact ? 7 : 12)
+            .padding(.vertical, compact ? 3 : 4.5)
+            .background(Color.white.opacity(0.07), in: Capsule())
+            .overlay { Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1) }
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .cofleetCardSelectionExclusion(in: selectionCoordinateSpace)
+        .help("Browse and switch sessions")
+        .accessibilityLabel("Session history for \(project.displayName)")
+        .accessibilityValue("\(sessionCount) session\(sessionCount == 1 ? "" : "s")")
     }
 
     private var todoPreview: some View {
@@ -1156,7 +1165,9 @@ public struct CoFleetProjectCard: View {
                     name: project.displayName,
                     manifest: petManifest,
                     asset: petAsset,
-                    action: activity?.actionIndicator ?? project.state.actionIndicator,
+                    // Match Manada's portrait behavior: the pet keeps its full
+                    // idle preview loop while action state lives in its own ball.
+                    action: .idle,
                     size: metrics.spriteDiameter
                 )
                 .scaleEffect(progressState == .working && pulse && !reduceMotion ? 1.055 : 1)
@@ -1185,29 +1196,41 @@ public struct CoFleetProjectCard: View {
 
     @ViewBuilder
     private func codexPill(compact: Bool) -> some View {
-        let content = HStack(spacing: 8) {
+        let content = HStack(spacing: compact ? 5 : 7) {
             CoFleetProgressCodexMark()
                 .frame(width: compact ? 15 : 22, height: compact ? 15 : 22)
             Text("Codex")
                 .font(.system(size: compact ? 12 : 16, weight: .bold, design: .rounded))
+            Text("·")
+                .foregroundStyle(providerActivityColor.opacity(0.62))
+            Text(providerActivityLabel)
+                .font(.system(size: compact ? 12 : 16, weight: .heavy, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+            if providerActivityShowsProgress {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(providerActivityColor)
+            }
         }
-        .foregroundStyle(CoFleetTheme.green)
+        .foregroundStyle(providerActivityColor)
         .padding(.horizontal, compact ? 7 : 12)
         .padding(.vertical, compact ? 4 : 6)
-        .background(CoFleetTheme.green.opacity(0.11), in: Capsule())
-        .overlay { Capsule().stroke(CoFleetTheme.green.opacity(0.24), lineWidth: 1) }
+        .background(providerActivityColor.opacity(0.11), in: Capsule())
+        .overlay { Capsule().stroke(providerActivityColor.opacity(0.24), lineWidth: 1) }
         .contentShape(Capsule())
 
         if let localThreadURL {
             Link(destination: localThreadURL) { content }
                 .buttonStyle(.plain)
-                .fixedSize()
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .cofleetCardSelectionExclusion(in: selectionCoordinateSpace)
                 .help("Open this task in Codex")
+                .accessibilityLabel("Codex, \(providerActivityLabel)")
         } else {
             content
-                .fixedSize()
-                .accessibilityLabel("Codex harness")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel("Codex, \(providerActivityLabel)")
         }
     }
 
@@ -1284,23 +1307,41 @@ public struct CoFleetProjectCard: View {
         }
     }
 
-    private var activityLabel: String? {
+    private var providerActivityLabel: String {
+        CoFleetProgressProviderBadgePolicy.activityLabel(
+            activity: activity,
+            projectState: project.state,
+            reachability: host?.reachability ?? .unknown
+        )
+    }
+
+    private var providerActivityColor: Color {
+        switch host?.reachability ?? .unknown {
+        case .offline, .degraded:
+            return CoFleetTheme.orange
+        case .unknown:
+            return .gray
+        case .online:
+            break
+        }
+
         if let activity {
             switch activity {
-            case .idle: return nil
-            case .thinking: return "Codex is thinking"
-            case .reasoning: return "Codex is reasoning"
-            case .runningCommand: return "Codex is running a command"
-            case .approval: return "Waiting for your approval"
-            case .question: return "Waiting for your response"
-            case .replied: return "Codex replied"
+            case .approval, .question: return CoFleetTheme.danger
+            case .thinking, .reasoning, .runningCommand: return accent
+            case .idle, .replied: return CoFleetTheme.green
             }
         }
-        switch project.state {
-        case .working: return "Codex is working"
-        case .waitingForApproval: return "Waiting for your approval"
-        case .waitingForAnswer: return "Waiting for your response"
-        case .idle, .replied, .unavailable: return nil
+        return progressColor
+    }
+
+    private var providerActivityShowsProgress: Bool {
+        guard host?.reachability == .online else { return false }
+        switch activity {
+        case .thinking, .reasoning, .runningCommand:
+            return true
+        case .idle, .approval, .question, .replied, .none:
+            return activity == nil && project.state == .working
         }
     }
 

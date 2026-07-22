@@ -74,6 +74,7 @@ class HTTPTests(unittest.TestCase):
         self.assertTrue(headers["Content-Type"].startswith("text/event-stream"))
         self.assertIn(b"event: test.event", payload)
         self.assertIn(b'"value":1', payload)
+        self.assertIn(b'"_cofleetReplay":true', payload)
 
     def test_session_sse_checkpoints_filtered_host_events(self) -> None:
         existing, _ = self.fixture.service.events.replay(0)
@@ -139,6 +140,7 @@ class HTTPTests(unittest.TestCase):
         )
         fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
         self.assertEqual(event_name, fixture["event"])
+        self.assertTrue(data.pop("_cofleetReplay"))
         self.assertEqual(data, fixture["data"])
         self.assertNotIn("providerPrivate", payload.decode("utf-8"))
 

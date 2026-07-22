@@ -213,6 +213,25 @@ final class PetFeatureTests: XCTestCase {
         XCTAssertTrue(store.discoveredPets.isEmpty)
     }
 
+    @MainActor
+    func testCommunityRepositoriesRemainSeparatedCatalogsAndInstallThroughHost() async throws {
+        let repository = PetWorkspaceRepositoryFake(hostID: hostID)
+        let store = WorkspaceStore(repository: repository)
+        await store.open(hostID: hostID, projectID: "project-sample")
+
+        try await store.refreshPetCatalogs()
+        XCTAssertEqual(store.petCatalogs.map(\.id), ["codex-pokepets", "petdex"])
+
+        try await store.loadPetCatalog(id: "petdex")
+        XCTAssertEqual(store.catalogPetsByCatalogID["petdex"]?.map(\.id), ["boba"])
+        XCTAssertNil(store.catalogPetsByCatalogID["codex-pokepets"])
+
+        let installed = try await store.installCatalogPet(catalogID: "petdex", petID: "boba")
+        XCTAssertEqual(installed?.id, "pet_sample")
+        let installs = await repository.catalogInstalls()
+        XCTAssertEqual(installs, ["petdex:boba"])
+    }
+
     private func manifest(version: Int, rows: Int, suffix: Character) -> CoFleetPetManifest {
         CoFleetPetManifest(
             hostID: hostID,
@@ -230,6 +249,7 @@ private actor PetWorkspaceRepositoryFake: CoFleetWorkspaceRepository {
     private let hostID: CoFleetHostID
     private var requestedAssets: [String] = []
     private var imported = false
+    private var installedCatalogPets: [String] = []
 
     init(hostID: CoFleetHostID) {
         self.hostID = hostID
@@ -269,6 +289,63 @@ private actor PetWorkspaceRepositoryFake: CoFleetWorkspaceRepository {
         return manifest
     }
 
+    func fetchPetCatalogs(hostID: CoFleetHostID) async throws -> [CoFleetPetCatalog] {
+        [
+            CoFleetPetCatalog(
+                id: "codex-pokepets",
+                displayName: "Codex PokéPets",
+                description: "Pokémon",
+                repositoryURL: "https://example.invalid/poke",
+                licenseSummary: "fan-use"
+            ),
+            CoFleetPetCatalog(
+                id: "petdex",
+                displayName: "Petdex",
+                description: "Community",
+                repositoryURL: "https://example.invalid/petdex",
+                licenseSummary: "varies"
+            ),
+        ]
+    }
+
+    func fetchPetCatalogPage(
+        hostID: CoFleetHostID,
+        catalogID: String,
+        query: String,
+        cursor: String?
+    ) async throws -> CoFleetPetCatalogPage {
+        CoFleetPetCatalogPage(
+            catalog: CoFleetPetCatalog(
+                id: catalogID,
+                displayName: "Petdex",
+                description: "Community",
+                repositoryURL: "https://example.invalid/petdex",
+                licenseSummary: "varies",
+                itemCount: 1
+            ),
+            pets: [CoFleetPetCatalogItem(
+                catalogID: catalogID,
+                id: "boba",
+                displayName: "Boba",
+                description: "",
+                author: "Example",
+                license: "CC0",
+                spriteVersionNumber: 1,
+                previewURL: "https://example.invalid/boba.webp",
+                previewKind: .atlas
+            )]
+        )
+    }
+
+    func installCatalogPet(
+        hostID: CoFleetHostID,
+        catalogID: String,
+        petID: String
+    ) async throws -> CoFleetPetManifest {
+        installedCatalogPets.append("\(catalogID):\(petID)")
+        return manifest
+    }
+
     func selectPet(hostID: CoFleetHostID, projectID: String, petID: String) async throws -> CoFleetProject {
         CoFleetProject(
             id: projectID,
@@ -295,6 +372,7 @@ private actor PetWorkspaceRepositoryFake: CoFleetWorkspaceRepository {
     }
 
     func assetRequests() -> [String] { requestedAssets }
+    func catalogInstalls() -> [String] { installedCatalogPets }
 
     private var manifest: CoFleetPetManifest {
         CoFleetPetManifest(

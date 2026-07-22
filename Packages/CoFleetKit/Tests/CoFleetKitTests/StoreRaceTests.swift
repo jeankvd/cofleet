@@ -124,6 +124,23 @@ final class StoreRaceTests: XCTestCase {
         XCTAssertTrue(store.errorMessage?.contains("Pending interactions") == true)
     }
 
+    func testEventStreamTimeoutReconnectsWithoutShowingAConversationError() async {
+        let reconnected = AsyncLatch()
+        let repository = TransientEventDisconnectRepository(reconnected: reconnected)
+        let store = TurnStore(repository: repository)
+
+        await store.open(
+            hostID: .init(rawValue: "sample-host"),
+            projectID: "project-sample",
+            sessionID: "session-sample"
+        )
+        await reconnected.wait()
+
+        XCTAssertNil(store.errorMessage)
+        let requestCount = await repository.eventRequestCount()
+        XCTAssertEqual(requestCount, 2)
+    }
+
     func testComposerDraftsAreScopedByHostProjectAndSession() async {
         let store = TurnStore(repository: ImmediateTurnRepository())
         let firstHost = CoFleetHostID(rawValue: "host-a")
@@ -472,6 +489,30 @@ private actor InteractionFailureRepository: TurnRepositoryStub {
 }
 
 private actor ImmediateTurnRepository: TurnRepositoryStub {}
+
+private actor TransientEventDisconnectRepository: TurnRepositoryStub {
+    private let reconnected: AsyncLatch
+    private var eventRequests = 0
+
+    init(reconnected: AsyncLatch) {
+        self.reconnected = reconnected
+    }
+
+    func events(
+        hostID: CoFleetHostID,
+        sessionID: String,
+        afterEventID: String?
+    ) async throws -> AsyncThrowingStream<CoFleetSequencedTurnEvent, Error> {
+        eventRequests += 1
+        if eventRequests == 1 {
+            throw CoFleetClientError.unavailable("The request timed out.")
+        }
+        await reconnected.signal()
+        return AsyncThrowingStream { _ in }
+    }
+
+    func eventRequestCount() -> Int { eventRequests }
+}
 
 private actor SendRaceRepository: TurnRepositoryStub {
     private let sendStarted: AsyncLatch

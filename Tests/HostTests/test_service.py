@@ -1,8 +1,10 @@
+import json
 import pathlib
 import unittest
 
 from cofleet_host.errors import APIError
 from cofleet_host.service import ACCESS_PROFILES, SSERequest
+from cofleet_host.transcript import CodexRolloutTranscriptTail
 from cofleet_host.util import make_etag
 
 from helpers import ServiceFixture
@@ -239,6 +241,9 @@ class ServiceTests(unittest.TestCase):
         self.codex.responses["turn/start"] = {
             "turn": {"id": "turn-imported", "status": "inProgress"}
         }
+        self.codex.responses["thread/resume"] = {
+            "thread": {"id": "thread-imported"}
+        }
 
         request_count = len(self.codex.requests)
         with self.assertRaises(APIError) as missing:
@@ -282,8 +287,23 @@ class ServiceTests(unittest.TestCase):
         )
         self.assertEqual(response.status, 201)
         self.assertEqual(
-            self.codex.requests[-2],
+            self.codex.requests[-3],
             ("thread/read", {"threadId": "thread-imported", "includeTurns": False}),
+        )
+        self.assertEqual(
+            self.codex.requests[-2],
+            (
+                "thread/resume",
+                {
+                    "threadId": "thread-imported",
+                    "cwd": self.project["canonicalPath"],
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "auto_review",
+                    "sandbox": "workspace-write",
+                    "config": {"features.default_mode_request_user_input": True},
+                    "model": "gpt-example",
+                },
+            ),
         )
         self.assertEqual(
             self.codex.requests[-1],
@@ -324,6 +344,43 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(reassignment.exception.code, "session_project_mismatch")
         self.assertEqual(len(self.codex.requests), request_count)
 
+    def test_existing_session_resumes_after_codex_process_generation_changes(self) -> None:
+        self.codex.responses["thread/start"] = {"thread": {"id": "thread-1", "name": "New"}}
+        self.dispatch(
+            "POST",
+            "/v1/sessions",
+            {"projectID": self.project["id"], "accessLevel": "approve_for_me"},
+        )
+
+        self.codex.generation = "fake-generation-2"
+        self.codex.responses["thread/resume"] = {"thread": {"id": "thread-1"}}
+        self.codex.responses["turn/start"] = {
+            "turn": {"id": "turn-after-restart", "status": "inProgress"}
+        }
+        response = self.dispatch(
+            "POST",
+            "/v1/sessions/thread-1/turns",
+            {"message": "continue after restart"},
+            headers={"Idempotency-Key": "restart-request-1"},
+        )
+
+        self.assertEqual(response.status, 201)
+        self.assertEqual(
+            self.codex.requests[-2],
+            (
+                "thread/resume",
+                {
+                    "threadId": "thread-1",
+                    "cwd": self.project["canonicalPath"],
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "auto_review",
+                    "sandbox": "workspace-write",
+                    "config": {"features.default_mode_request_user_input": True},
+                },
+            ),
+        )
+        self.assertEqual(self.codex.requests[-1][0], "turn/start")
+
     def test_transcript_flattens_codex_turn_items(self) -> None:
         self.codex.responses["thread/read"] = {
             "thread": {
@@ -344,6 +401,50 @@ class ServiceTests(unittest.TestCase):
         result = self.dispatch("GET", "/v1/sessions/thread-1/transcript").payload
         self.assertEqual(result["turns"][0]["items"][0]["role"], "user")
         self.assertEqual(result["turns"][0]["items"][1]["text"], "Hello")
+
+    def test_large_transcript_uses_bounded_codex_rollout_tail(self) -> None:
+        session_id = "019f52f6-50b0-7ba2-8665-e3a9ab849750"
+        directory = self.fixture.home / ".codex" / "sessions" / "2026" / "07" / "21"
+        directory.mkdir(parents=True)
+        path = directory / ("rollout-example-" + session_id + ".jsonl")
+        rows = [
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Latest question"}],
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "phase": "final_answer",
+                    "content": [{"type": "output_text", "text": "Latest answer"}],
+                },
+            },
+        ]
+        path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+        self.service._transcript_tail = CodexRolloutTranscriptTail(
+            self.fixture.home / ".codex", large_rollout_threshold=1
+        )
+        self.codex.responses["thread/read"] = {
+            "thread": {"id": session_id, "name": "Large task", "turns": []}
+        }
+
+        result = self.dispatch("GET", "/v1/sessions/%s/transcript" % session_id).payload
+
+        self.assertTrue(result["truncated"])
+        self.assertEqual(
+            [item["text"] for item in result["turns"][0]["items"]],
+            ["Latest question", "Latest answer"],
+        )
+        self.assertEqual(
+            self.codex.requests[-1],
+            ("thread/read", {"threadId": session_id, "includeTurns": False}),
+        )
 
     def test_notes_and_todos_require_revisions(self) -> None:
         note_response = self.dispatch(

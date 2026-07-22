@@ -326,12 +326,21 @@ public struct CoFleetHostEventDecoder: Sendable {
         _ raw: CoFleetSSEEvent,
         _ event: CoFleetHostEvent
     ) -> CoFleetSequencedHostEvent {
-        CoFleetSequencedHostEvent(
+        let replay = (try? decoder.decode(
+            HostEventDeliveryPayload.self,
+            from: Data(raw.data.utf8)
+        ))?._cofleetReplay ?? false
+        return CoFleetSequencedHostEvent(
             id: raw.id,
             event: event,
-            retryMilliseconds: raw.retryMilliseconds
+            retryMilliseconds: raw.retryMilliseconds,
+            isReplay: replay
         )
     }
+}
+
+private struct HostEventDeliveryPayload: Decodable {
+    var _cofleetReplay: Bool?
 }
 
 private struct ActivityPayload: Decodable {

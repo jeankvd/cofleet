@@ -167,10 +167,45 @@ public protocol CoFleetWorkspaceRepository: Sendable {
     func fetchPets(hostID: CoFleetHostID) async throws -> [CoFleetPetManifest]
     func discoverPets(hostID: CoFleetHostID) async throws -> [CoFleetDiscoveredPet]
     func importPet(hostID: CoFleetHostID, sourcePath: String) async throws -> CoFleetPetManifest
+    func fetchPetCatalogs(hostID: CoFleetHostID) async throws -> [CoFleetPetCatalog]
+    func fetchPetCatalogPage(
+        hostID: CoFleetHostID,
+        catalogID: String,
+        query: String,
+        cursor: String?
+    ) async throws -> CoFleetPetCatalogPage
+    func installCatalogPet(
+        hostID: CoFleetHostID,
+        catalogID: String,
+        petID: String
+    ) async throws -> CoFleetPetManifest
     func selectPet(hostID: CoFleetHostID, projectID: String, petID: String) async throws -> CoFleetProject
     func fetchPetAsset(
         hostID: CoFleetHostID,
         petID: String,
         assetName: String
     ) async throws -> CoFleetPetAsset
+}
+
+public extension CoFleetWorkspaceRepository {
+    func fetchPetCatalogs(hostID: CoFleetHostID) async throws -> [CoFleetPetCatalog] {
+        throw CoFleetClientError.incompatible("This host does not support community pet catalogs.")
+    }
+
+    func fetchPetCatalogPage(
+        hostID: CoFleetHostID,
+        catalogID: String,
+        query: String,
+        cursor: String?
+    ) async throws -> CoFleetPetCatalogPage {
+        throw CoFleetClientError.incompatible("This host does not support community pet catalogs.")
+    }
+
+    func installCatalogPet(
+        hostID: CoFleetHostID,
+        catalogID: String,
+        petID: String
+    ) async throws -> CoFleetPetManifest {
+        throw CoFleetClientError.incompatible("This host does not support community pet catalogs.")
+    }
 }

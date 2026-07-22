@@ -232,7 +232,11 @@ public final class CoFleetAppController {
                     }
                     if let id = sequenced.id { hostEventCursors[hostID] = id }
                     if let retry = sequenced.retryMilliseconds { serverRetryMilliseconds = retry }
-                    consumeHostEvent(sequenced.event, hostID: hostID)
+                    consumeHostEvent(
+                        sequenced.event,
+                        hostID: hostID,
+                        isReplay: sequenced.isReplay
+                    )
                 }
             } catch is CancellationError {
                 return
@@ -249,7 +253,11 @@ public final class CoFleetAppController {
         }
     }
 
-    private func consumeHostEvent(_ event: CoFleetHostEvent, hostID: CoFleetHostID) {
+    private func consumeHostEvent(
+        _ event: CoFleetHostEvent,
+        hostID: CoFleetHostID,
+        isReplay: Bool
+    ) {
         switch event {
         case let .sessionCatalogUpdated(update):
             guard update.hostID == hostID,
@@ -304,6 +312,11 @@ public final class CoFleetAppController {
             case let .turnUpdated(_, turn):
                 threadStore.applyLiveTurn(hostID: hostID, projectID: projectID, turn: turn)
             case let .turnItem(_, sessionID, item):
+                // A reconnect can replay many historical partial deltas in a
+                // fraction of a second. Ignore those partial snapshots; the
+                // completed item (or catalog reconciliation) supplies the full
+                // answer atomically. New events still stream normally.
+                guard item.state != .streaming || !isReplay else { break }
                 let activitySessionID = fleetStore.activity(for: projectID)?.sessionID
                 threadStore.applyLiveItem(
                     hostID: hostID,
